@@ -2,7 +2,7 @@ name: Automatsko prikupljanje vesti
 
 on:
   schedule:
-    - cron: '0 * * * *' # Svakog sata
+    - cron: '0 * * * *'
   workflow_dispatch: 
 
 permissions:
@@ -25,13 +25,15 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Pokreni skriptu
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python src/main.py
 
-      - name: Sačuvaj rezultate na GitHub
+      - name: Sacuvaj rezultate na GitHub
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add content/vesti.json
           git add content/slike/
-          git commit -m "Automatsko ažuriranje vesti i slika [skip ci]" || exit 0
+          git commit -m "Automatsko azuriranje vesti i slika [skip ci]" || exit 0
           git push

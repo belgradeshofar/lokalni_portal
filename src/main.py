@@ -3,8 +3,10 @@ import os
 import json
 import time
 import requests
-import html  # <-- Dodato za čišćenje HTML entiteta
+import html
+import base64
 
+# --- KONFIGURACIJA ---
 RSS_FEEDS = [
     "https://poportal.rs/feed/",
     "https://rtvbiser.rs/feed/",
@@ -22,10 +24,9 @@ OUTPUT_FOLDER = "content"
 VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
 SLIKE_FOLDER = os.path.join(OUTPUT_FOLDER, "slike")
 
-# Ovaj header je ključan da nas GitHub Actions ne bi blokirao
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+# Token se cita iz GitHub Secrets, ne stoji u kodu
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 def prikupi_vesti():
     sve_vesti = []
@@ -37,11 +38,9 @@ def prikupi_vesti():
                 print(f"  Nema vesti ili greska: {url}")
                 continue
 
-            for entry in feed.entries[:2]:
-                # Čistimo HTML entitete (&nbsp;, &#8230;, itd.)
+            for entry in feed.entries[:2]:  # Prve 2 po portalu za test
                 originalni_naslov = html.unescape(entry.title)
                 originalni_tekst = html.unescape(entry.get('summary', entry.get('description', '')))
-                
                 print(f"  Obradujem: {originalni_naslov[:40]}...")
 
                 novi_naslov = preformulisi_tekst(originalni_naslov, "naslov")
@@ -57,7 +56,8 @@ def prikupi_vesti():
                     "izvor": url
                 }
                 sve_vesti.append(vest)
-                time.sleep(2)
+                time.sleep(1)
+
         except Exception as e:
             print(f"  Greska: {e}")
             continue
@@ -70,15 +70,26 @@ def prikupi_vesti():
 def preformulisi_tekst(tekst, tip):
     if not tekst:
         return ""
+    
+    # Koristimo model koji dobro radi na srpskom i dostupan je besplatno
+    model_url = "https://api-inference.huggingface.co/models/microsoft/Phi-3-mini-4k-instruct"
+    
     prompt = f"Ti si iskusni novinar lokalnih vesti u Srbiji. Preformuliši sledeći {tip} na srpskom jeziku, u profesionalnom novinarskom stilu, zadržavajući sve činjenice. Vrati samo preformulisani tekst.\n\nOriginal: {tekst}"
+    
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_new_tokens": 500, "temperature": 0.7, "return_full_text": False}
+    }
+    
     try:
-        encoded_prompt = requests.utils.quote(prompt)
-        url = f"https://text.pollinations.ai/{encoded_prompt}"
-        response = requests.get(url, headers=HEADERS, timeout=30)
+        response = requests.post(model_url, headers=HF_HEADERS, json=payload, timeout=60)
         if response.status_code == 200:
-            return html.unescape(response.text.strip())
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                return html.unescape(result[0].get('generated_text', tekst).strip())
+            return tekst
         else:
-            print(f"    AI greska (tekst): {response.status_code}")
+            print(f"    AI greska (tekst): Status {response.status_code} - {response.text[:100]}")
             return tekst
     except Exception as e:
         print(f"    Greska pri preformulisanju: {e}")
@@ -87,14 +98,16 @@ def preformulisi_tekst(tekst, tip):
 def generisi_sliku(naslov):
     if not naslov:
         return ""
+    
     ime_fajla = f"slika_{int(time.time())}.jpg"
     putanja = os.path.join(SLIKE_FOLDER, ime_fajla)
-    prompt = f"Novinska fotografija: {naslov}, realistično, profesionalno"
+    
+    model_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+    prompt = f"News photograph: {naslov}, realistic, professional, 4k"
+    
     try:
-        encoded_prompt = requests.utils.quote(prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=800&height=500&nologo=true"
-        print(f"    Pokusavam da generisem sliku...")
-        response = requests.get(url, headers=HEADERS, timeout=90)
+        print(f"    Generisem sliku...")
+        response = requests.post(model_url, headers=HF_HEADERS, json={"inputs": prompt}, timeout=90)
         if response.status_code == 200:
             with open(putanja, "wb") as f:
                 f.write(response.content)

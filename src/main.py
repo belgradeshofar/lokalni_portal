@@ -24,19 +24,27 @@ VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
 SLIKE_FOLDER = os.path.join(OUTPUT_FOLDER, "slike")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# Reči koje se NIKADA ne smeju naći u promptu za sliku (sprečava generisanje lica)
 ZABRANJENE_RECI = [
     "face", "portrait", "man", "woman", "person", "people", "child",
     "boy", "girl", "president", "politician", "actor", "singer",
     "human", "male", "female", "guy", "lady", "crowd"
 ]
 
+# Pauza izmedju generisanja slika (Pollinations: 1 req / 15s)
+PAUZA_IZMEDJU_SLIKA = 16
+
 
 def prikupi_vesti():
+    print(f"--- START ---")
+    print(f"Gemini API key prisutan: {'DA' if GEMINI_API_KEY else 'NE'}")
+    print(f"Gemini model: {GEMINI_MODEL}")
+    print(f"------------")
+
     sve_vesti = []
     for url in RSS_FEEDS:
         print(f"Povezujem se na: {url}...")
@@ -65,7 +73,7 @@ def prikupi_vesti():
                     "izvor": url
                 }
                 sve_vesti.append(vest)
-                time.sleep(2)
+                time.sleep(3)
         except Exception as e:
             print(f"  Greska: {e}")
             continue
@@ -100,19 +108,23 @@ Original:
         response = requests.post(GEMINI_URL, json=payload, timeout=60)
         if response.status_code == 200:
             data = response.json()
-            result = data["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"    Gemini OK za {tip}.")
-            return html.unescape(result.strip())
+            try:
+                result = data["candidates"][0]["content"]["parts"][0]["text"]
+                print(f"    [OK] Gemini vratio {tip} ({len(result)} znakova)")
+                return html.unescape(result.strip())
+            except (KeyError, IndexError) as e:
+                print(f"    [GRESKA] Neocekivan odgovor: {str(data)[:300]}")
+                return tekst
         else:
-            print(f"    Gemini greska: {response.status_code} - {response.text[:200]}")
+            print(f"    [GRESKA] Status {response.status_code}")
+            print(f"    [GRESKA] Odgovor: {response.text[:500]}")
             return tekst
     except Exception as e:
-        print(f"    Greska pri preformulisanju: {e}")
+        print(f"    [GRESKA] {e}")
         return tekst
 
 
 def ocisti_prompt(prompt):
-    """Uklanja sve reči koje bi mogle da dovedu do generisanja lica."""
     prompt_lower = prompt.lower()
     for rec in ZABRANJENE_RECI:
         if re.search(r'\b' + re.escape(rec) + r'\b', prompt_lower):
@@ -121,7 +133,6 @@ def ocisti_prompt(prompt):
 
 
 def uzmi_originalnu_sliku(entry):
-    """Pokušava da izvuče originalnu sliku iz RSS unosa."""
     if hasattr(entry, 'media_content') and entry.media_content:
         for m in entry.media_content:
             if m.get('url'):
@@ -143,7 +154,6 @@ def uzmi_originalnu_sliku(entry):
 
 
 def generisi_sliku(naslov, entry=None):
-    """Generiše apstraktnu sliku ili koristi originalnu iz RSS-a."""
     if not naslov:
         return ""
 
@@ -151,22 +161,24 @@ def generisi_sliku(naslov, entry=None):
     putanja = os.path.join(SLIKE_FOLDER, ime_fajla)
     headers = {"User-Agent": USER_AGENT}
 
-    # --- POKUŠAJ 1: Originalna slika iz RSS-a ---
+    # POKUSAJ 1: Originalna slika iz RSS-a
     if entry is not None:
         original_url = uzmi_originalnu_sliku(entry)
         if original_url:
             try:
-                print(f"    Koristim originalnu sliku iz RSS-a...")
+                print(f"    Originalna slika u RSS-u: {original_url[:60]}...")
                 r = requests.get(original_url, headers=headers, timeout=30)
                 if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
                     with open(putanja, "wb") as f:
                         f.write(r.content)
-                    print(f"    Originalna slika preuzeta: {ime_fajla}")
+                    print(f"    [OK] Originalna slika sacuvana: {ime_fajla}")
                     return ime_fajla
+                else:
+                    print(f"    Originalna slika ne radi: status {r.status_code}")
             except Exception as e:
                 print(f"    Ne mogu originalnu sliku: {e}")
 
-    # --- POKUŠAJ 2: Gemini pravi apstraktni prompt ---
+    # POKUSAJ 2: Gemini pravi apstraktni prompt
     prompt_za_gemini = f"""You are creating a symbolic, ATMOSPHERIC image prompt for a news article.
 Headline (in Serbian): {naslov}
 
@@ -190,15 +202,16 @@ Return ONLY the English prompt, nothing else."""
         if g_response.status_code == 200:
             engleski_prompt = g_response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             engleski_prompt = engleski_prompt.replace("\n", " ").replace('"', '').strip()[:180]
-            print(f"    Gemini prompt: {engleski_prompt}")
+            print(f"    [OK] Gemini prompt za sliku: {engleski_prompt}")
+        else:
+            print(f"    [GRESKA] Gemini za sliku: status {g_response.status_code}")
     except Exception as e:
-        print(f"    Greska Gemini za sliku: {e}")
+        print(f"    [GRESKA] Gemini za sliku: {e}")
 
-    # --- SIGURNOSNA PROVERA: ako prompt sadrži ljude, koristimo fallback ---
     if engleski_prompt:
         ociscen = ocisti_prompt(engleski_prompt)
         if ociscen is None:
-            print(f"    Prompt sadrzi zabranjene reci, koristim apstraktni fallback.")
+            print(f"    Prompt sadrzi zabranjene reci, koristim fallback.")
             engleski_prompt = None
 
     if not engleski_prompt:
@@ -206,9 +219,9 @@ Return ONLY the English prompt, nothing else."""
 
     finalni_prompt = f"{engleski_prompt}, no people, no faces, no humans, symbolic, atmospheric, landscape"
 
-    # --- POKUŠAJ 3: Pollinations generiše apstraktnu sliku ---
+    # POKUSAJ 3: Pollinations
     encoded = requests.utils.quote(finalni_prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded}?width=800&height=500&nologo=true&seed={int(time.time())}&model=flux"
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=800&height=500&nologo=true&seed={int(time.time())}"
 
     try:
         print(f"    Generisem apstraktnu sliku...")
@@ -217,13 +230,16 @@ Return ONLY the English prompt, nothing else."""
         if response.status_code == 200 and "image" in content_type:
             with open(putanja, "wb") as f:
                 f.write(response.content)
-            print(f"    Slika OK: {ime_fajla}")
+            print(f"    [OK] Slika: {ime_fajla}")
+            # Pauza da ne prekoracimo rate limit
+            print(f"    Pauza {PAUZA_IZMEDJU_SLIKA}s...")
+            time.sleep(PAUZA_IZMEDJU_SLIKA)
             return ime_fajla
         else:
-            print(f"    Greska slike: {response.status_code}")
+            print(f"    [GRESKA] Pollinations: status {response.status_code}")
             return ""
     except Exception as e:
-        print(f"    Greska pri generisanju slike: {e}")
+        print(f"    [GRESKA] Pollinations: {e}")
         return ""
 
 

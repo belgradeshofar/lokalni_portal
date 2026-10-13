@@ -1,0 +1,9 @@
+src/
+venv/
+.venv/
+__pycache__/
+*.py
+*.yml
+*.yaml
+.github/
+requirements.txt

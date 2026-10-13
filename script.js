@@ -15,8 +15,13 @@ async function ucitajVesti() {
 
         container.innerHTML = '';
         
-        vesti.forEach(vest => {
-            const article = document.createElement('article');
+        vesti.forEach((vest, index) => {
+            // Nađi originalni indeks u JSON-u za link
+            const originalIndex = vesti.indexOf(vest);
+            
+            const article = document.createElement('a');
+            article.className = 'card-link';
+            article.href = `vijest.html?i=${vesti.length - 1 - index}`;
             
             const slikaUrl = vest.slika 
                 ? `content/slike/${vest.slika}` 
@@ -24,7 +29,7 @@ async function ucitajVesti() {
             
             const kratakTekst = vest.tekst 
                 ? vest.tekst.substring(0, 180) + (vest.tekst.length > 180 ? '...' : '')
-                : 'Klikni na izvor za više informacija.';
+                : 'Klikni za više informacija.';
             
             const datumPrikaz = vest.datum ? vest.datum.split(' ')[0] : '';
             
@@ -36,7 +41,7 @@ async function ucitajVesti() {
                     <p class="tekst">${kratakTekst}</p>
                     <div class="meta">
                         <span>${datumPrikaz}</span>
-                        <a href="${vest.link}" target="_blank" rel="noopener">Izvor →</a>
+                        <span class="vise">Pročitaj →</span>
                     </div>
                 </div>
             `;

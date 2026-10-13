@@ -1,0 +1,25 @@
+name: Automatsko prikupljanje vesti
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Pokreće se svakog sata (na svaki pun sat)
+  workflow_dispatch: # Omogućava ručno pokretanje klikom na dugme
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Preuzmi kod
+        uses: actions/checkout@v4
+
+      - name: Podesi Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instaliraj biblioteke
+        run: pip install -r requirements.txt
+
+      - name: Pokreni skriptu
+        run: python src/main.py

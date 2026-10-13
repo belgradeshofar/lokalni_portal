@@ -4,9 +4,7 @@ import json
 import time
 import requests
 import html
-import base64
 
-# --- KONFIGURACIJA ---
 RSS_FEEDS = [
     "https://poportal.rs/feed/",
     "https://rtvbiser.rs/feed/",
@@ -24,9 +22,10 @@ OUTPUT_FOLDER = "content"
 VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
 SLIKE_FOLDER = os.path.join(OUTPUT_FOLDER, "slike")
 
-# Token se cita iz GitHub Secrets, ne stoji u kodu
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 def prikupi_vesti():
     sve_vesti = []
@@ -38,13 +37,14 @@ def prikupi_vesti():
                 print(f"  Nema vesti ili greska: {url}")
                 continue
 
-            for entry in feed.entries[:2]:  # Prve 2 po portalu za test
+            for entry in feed.entries[:2]:
                 originalni_naslov = html.unescape(entry.title)
                 originalni_tekst = html.unescape(entry.get('summary', entry.get('description', '')))
-                print(f"  Obradujem: {originalni_naslov[:40]}...")
+                
+                print(f"  Obradujem: {originalni_naslov[:50]}...")
 
                 novi_naslov = preformulisi_tekst(originalni_naslov, "naslov")
-                novi_tekst = preformulisi_tekst(originalni_tekst, "tekst")
+                novi_tekst = preformulisi_tekst(originalni_tekst, "tekst kratke novinske vesti")
                 ime_slike = generisi_sliku(novi_naslov)
 
                 vest = {
@@ -56,8 +56,7 @@ def prikupi_vesti():
                     "izvor": url
                 }
                 sve_vesti.append(vest)
-                time.sleep(1)
-
+                time.sleep(2)
         except Exception as e:
             print(f"  Greska: {e}")
             continue
@@ -65,31 +64,37 @@ def prikupi_vesti():
     os.makedirs(SLIKE_FOLDER, exist_ok=True)
     with open(VESTI_FAJL, "w", encoding="utf-8") as f:
         json.dump(sve_vesti, f, ensure_ascii=False, indent=4)
-    print(f"\nUkupno sacuvano {len(sve_vesti)} vesti u {VESTI_FAJL}")
+    print(f"\nUkupno sacuvano {len(sve_vesti)} vesti.")
 
 def preformulisi_tekst(tekst, tip):
     if not tekst:
         return ""
     
-    # Koristimo model koji dobro radi na srpskom i dostupan je besplatno
-    model_url = "https://api-inference.huggingface.co/models/microsoft/Phi-3-mini-4k-instruct"
-    
-    prompt = f"Ti si iskusni novinar lokalnih vesti u Srbiji. Preformuliši sledeći {tip} na srpskom jeziku, u profesionalnom novinarskom stilu, zadržavajući sve činjenice. Vrati samo preformulisani tekst.\n\nOriginal: {tekst}"
+    prompt = f"""Ti si iskusni novinar lokalnih vesti u Srbiji. 
+Preformuliši sledeći {tip} na srpskom jeziku, u profesionalnom novinarskom stilu. 
+PRAVILA:
+- Zadrži sve činjenice, imena, datume i brojeve.
+- Promeni strukturu rečenica (nemoj samo zameniti po neku reč).
+- Ukloni HTML tagove, linkove i fraze poput "The post... appeared first on...".
+- Vrati SAMO preformulisani tekst, bez uvoda i objašnjenja.
+
+Original:
+{tekst}"""
     
     payload = {
-        "inputs": prompt,
-        "parameters": {"max_new_tokens": 500, "temperature": 0.7, "return_full_text": False}
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 800}
     }
     
     try:
-        response = requests.post(model_url, headers=HF_HEADERS, json=payload, timeout=60)
+        response = requests.post(GEMINI_URL, json=payload, timeout=60)
         if response.status_code == 200:
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                return html.unescape(result[0].get('generated_text', tekst).strip())
-            return tekst
+            data = response.json()
+            result = data["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"    Gemini je vratio preformulisan {tip}.")
+            return html.unescape(result.strip())
         else:
-            print(f"    AI greska (tekst): Status {response.status_code} - {response.text[:100]}")
+            print(f"    Gemini greska: {response.status_code} - {response.text[:200]}")
             return tekst
     except Exception as e:
         print(f"    Greska pri preformulisanju: {e}")
@@ -99,22 +104,25 @@ def generisi_sliku(naslov):
     if not naslov:
         return ""
     
-    ime_fajla = f"slika_{int(time.time())}.jpg"
+    ime_fajla = f"slika_{int(time.time()*1000)}.jpg"
     putanja = os.path.join(SLIKE_FOLDER, ime_fajla)
     
-    model_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-    prompt = f"News photograph: {naslov}, realistic, professional, 4k"
+    prompt = f"news photograph, {naslov}, realistic, professional press photo"
+    encoded = requests.utils.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=800&height=500&nologo=true&seed={int(time.time())}"
+    headers = {"User-Agent": USER_AGENT}
     
     try:
         print(f"    Generisem sliku...")
-        response = requests.post(model_url, headers=HF_HEADERS, json={"inputs": prompt}, timeout=90)
-        if response.status_code == 200:
+        response = requests.get(url, headers=headers, timeout=120)
+        content_type = response.headers.get("content-type", "")
+        if response.status_code == 200 and "image" in content_type:
             with open(putanja, "wb") as f:
                 f.write(response.content)
             print(f"    Slika generisana: {ime_fajla}")
             return ime_fajla
         else:
-            print(f"    Greska pri generisanju slike: Status {response.status_code}")
+            print(f"    Greska slike: Status {response.status_code}, tip {content_type}")
             return ""
     except Exception as e:
         print(f"    Greska pri generisanju slike: {e}")

@@ -3,6 +3,7 @@ import os
 import json
 import time
 import requests
+import html  # <-- Dodato za čišćenje HTML entiteta
 
 RSS_FEEDS = [
     "https://poportal.rs/feed/",
@@ -21,6 +22,11 @@ OUTPUT_FOLDER = "content"
 VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
 SLIKE_FOLDER = os.path.join(OUTPUT_FOLDER, "slike")
 
+# Ovaj header je ključan da nas GitHub Actions ne bi blokirao
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
 def prikupi_vesti():
     sve_vesti = []
     for url in RSS_FEEDS:
@@ -32,8 +38,10 @@ def prikupi_vesti():
                 continue
 
             for entry in feed.entries[:2]:
-                originalni_naslov = entry.title
-                originalni_tekst = entry.get('summary', entry.get('description', ''))
+                # Čistimo HTML entitete (&nbsp;, &#8230;, itd.)
+                originalni_naslov = html.unescape(entry.title)
+                originalni_tekst = html.unescape(entry.get('summary', entry.get('description', '')))
+                
                 print(f"  Obradujem: {originalni_naslov[:40]}...")
 
                 novi_naslov = preformulisi_tekst(originalni_naslov, "naslov")
@@ -66,12 +74,11 @@ def preformulisi_tekst(tekst, tip):
     try:
         encoded_prompt = requests.utils.quote(prompt)
         url = f"https://text.pollinations.ai/{encoded_prompt}"
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, headers=HEADERS, timeout=30)
         if response.status_code == 200:
-            print(f"    AI je vratio preformulisan {tip}.")
-            return response.text.strip()
+            return html.unescape(response.text.strip())
         else:
-            print(f"    AI greska: {response.status_code}")
+            print(f"    AI greska (tekst): {response.status_code}")
             return tekst
     except Exception as e:
         print(f"    Greska pri preformulisanju: {e}")
@@ -86,14 +93,15 @@ def generisi_sliku(naslov):
     try:
         encoded_prompt = requests.utils.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=800&height=500&nologo=true"
-        response = requests.get(url, timeout=60)
+        print(f"    Pokusavam da generisem sliku...")
+        response = requests.get(url, headers=HEADERS, timeout=90)
         if response.status_code == 200:
             with open(putanja, "wb") as f:
                 f.write(response.content)
             print(f"    Slika generisana: {ime_fajla}")
             return ime_fajla
         else:
-            print(f"    Greska pri generisanju slike: {response.status_code}")
+            print(f"    Greska pri generisanju slike: Status {response.status_code}")
             return ""
     except Exception as e:
         print(f"    Greska pri generisanju slike: {e}")

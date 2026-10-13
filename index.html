@@ -4,20 +4,62 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lokalne Vesti - Istočna Srbija</title>
+    <meta name="description" content="Najnovije vesti iz Istočne Srbije - Požarevac, Braničevo, Podunavlje">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <a href="index.html" class="logo-link">
-            <h1>Lokalne Vesti</h1>
-            <p>Istočna Srbija · Požarevac · Braničevo · Podunavlje</p>
-        </a>
+    <header class="site-header">
+        <div class="header-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">LV</span>
+                <span class="logo-text">
+                    <strong>Lokalne Vesti</strong>
+                    <small>Istočna Srbija</small>
+                </span>
+            </a>
+            <nav class="main-nav">
+                <a href="index.html" class="active">Naslovna</a>
+                <a href="#">Politika</a>
+                <a href="#">Sport</a>
+                <a href="#">Kultura</a>
+                <a href="#">Društvo</a>
+                <a href="#">Ekonomija</a>
+            </nav>
+        </div>
     </header>
-    <main id="news-container">
-        <p class="loading">Učitavam vesti...</p>
+
+    <section class="topics-bar">
+        <div class="topics-inner">
+            <span class="topics-label">Teme:</span>
+            <a href="#">Požarevac</a>
+            <a href="#">Braničevo</a>
+            <a href="#">Podunavlje</a>
+            <a href="#">Smederevo</a>
+            <a href="#">Veliko Gradište</a>
+            <a href="#">Kučevo</a>
+        </div>
+    </section>
+
+    <main class="container">
+        <div id="featured-container"></div>
+        <div id="news-container" class="news-grid"></div>
     </main>
-    <footer>
-        <p>Automatski generisano · Sve vesti su preformulisane uz pomoć AI</p>
+
+    <footer class="site-footer">
+        <div class="footer-inner">
+            <div class="footer-brand">
+                <strong>Lokalne Vesti</strong>
+                <p>Nezavisni lokalni portal Istočne Srbije</p>
+            </div>
+            <div class="footer-links">
+                <a href="#">O nama</a>
+                <a href="#">Kontakt</a>
+                <a href="#">Impresum</a>
+            </div>
+            <div class="footer-copy">
+                <p>© 2026 Lokalne Vesti · Sva prava zadržana</p>
+            </div>
+        </div>
     </footer>
     <script src="script.js"></script>
 </body>

@@ -91,7 +91,7 @@ Original:
         if response.status_code == 200:
             data = response.json()
             result = data["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"    Gemini je vratio preformulisan {tip}.")
+            print(f"    Gemini OK za {tip}.")
             return html.unescape(result.strip())
         else:
             print(f"    Gemini greska: {response.status_code} - {response.text[:200]}")
@@ -119,10 +119,10 @@ def generisi_sliku(naslov):
         if response.status_code == 200 and "image" in content_type:
             with open(putanja, "wb") as f:
                 f.write(response.content)
-            print(f"    Slika generisana: {ime_fajla}")
+            print(f"    Slika OK: {ime_fajla}")
             return ime_fajla
         else:
-            print(f"    Greska slike: Status {response.status_code}, tip {content_type}")
+            print(f"    Greska slike: {response.status_code}, tip {content_type}")
             return ""
     except Exception as e:
         print(f"    Greska pri generisanju slike: {e}")

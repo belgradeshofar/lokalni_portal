@@ -1,0 +1,1 @@
+vaj folder sadrži JSON bazu vesti i generisane slike.

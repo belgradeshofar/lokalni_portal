@@ -10,18 +10,19 @@ async function ucitajVesti() {
             return;
         }
 
-        // Sortiramo po datumu (najnovije prvo)
+        // ZAPAMTI originalni indeks PRE sortiranja
+        vesti.forEach((v, i) => v._idx = i);
+
+        // Sortiraj po datumu (najnovije prvo)
         vesti.sort((a, b) => (b.datum || '').localeCompare(a.datum || ''));
 
         container.innerHTML = '';
         
-        vesti.forEach((vest, index) => {
-            // Nađi originalni indeks u JSON-u za link
-            const originalIndex = vesti.indexOf(vest);
-            
+        vesti.forEach((vest) => {
             const article = document.createElement('a');
             article.className = 'card-link';
-            article.href = `vijest.html?i=${vesti.length - 1 - index}`;
+            // Koristimo ZAPAMCENI originalni indeks
+            article.href = `vijest.html?i=${vest._idx}`;
             
             const slikaUrl = vest.slika 
                 ? `content/slike/${vest.slika}` 

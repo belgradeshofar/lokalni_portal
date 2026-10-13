@@ -1,12 +1,24 @@
 async function ucitajVest() {
     const container = document.getElementById('article-container');
     
-    // Uzimamo indeks iz URL-a (?i=5)
+    // Debug - prikazujemo sta vidimo
+    const puni_url = window.location.href;
     const params = new URLSearchParams(window.location.search);
-    const indeks = parseInt(params.get('i'), 10);
+    const indeks_str = params.get('i');
+    
+    console.log('URL:', puni_url);
+    console.log('Indeks string:', indeks_str);
+    
+    const indeks = parseInt(indeks_str, 10);
+    console.log('Indeks broj:', indeks);
     
     if (isNaN(indeks) || indeks < 0) {
-        container.innerHTML = '<p class="loading">Vest nije pronađena.</p>';
+        container.innerHTML = `
+            <p class="loading">Vest nije pronađena.</p>
+            <p style="text-align:center; color:#888; font-size:0.8rem;">
+                Debug: URL je ${puni_url}, indeks = "${indeks_str}"
+            </p>
+        `;
         return;
     }
     
@@ -14,8 +26,10 @@ async function ucitajVest() {
         const response = await fetch('content/vesti.json?t=' + Date.now());
         const vesti = await response.json();
         
+        console.log('Broj vesti u JSON-u:', vesti.length);
+        
         if (!vesti || !vesti[indeks]) {
-            container.innerHTML = '<p class="loading">Vest nije pronađena.</p>';
+            container.innerHTML = `<p class="loading">Vest pod brojem ${indeks} ne postoji. Ukupno vesti: ${vesti.length}.</p>`;
             return;
         }
         
@@ -51,13 +65,12 @@ async function ucitajVest() {
         
     } catch (err) {
         console.error('Greška:', err);
-        container.innerHTML = '<p class="loading">Greška pri učitavanju vesti.</p>';
+        container.innerHTML = '<p class="loading">Greška pri učitavanju vesti: ' + err.message + '</p>';
     }
 }
 
 function formatirajTekst(tekst) {
     if (!tekst) return '<p>Tekst nije dostupan.</p>';
-    // Pretvaramo duple prelaze reda u pasuse
     return tekst
         .split(/\n\n+/)
         .map(p => `<p>${p.trim()}</p>`)

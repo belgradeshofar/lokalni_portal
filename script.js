@@ -1,80 +1,114 @@
+let sveVesti = [];
+let trenutnaKategorija = 'sve';
+
 async function ucitajVesti() {
     const featuredContainer = document.getElementById('featured-container');
     const container = document.getElementById('news-container');
     
     try {
         const response = await fetch('content/vesti.json?t=' + Date.now());
-        const vesti = await response.json();
+        sveVesti = await response.json();
         
-        if (!vesti || vesti.length === 0) {
+        if (!sveVesti || sveVesti.length === 0) {
             container.innerHTML = '<p class="loading">Trenutno nema vesti.</p>';
             return;
         }
 
-        // Zapamti originalni indeks PRE sortiranja
-        vesti.forEach((v, i) => v._idx = i);
+        sveVesti.forEach((v, i) => v._idx = i);
+        sveVesti.sort((a, b) => (b.datum || '').localeCompare(a.datum || ''));
 
-        // Sortiraj po datumu (najnovije prvo)
-        vesti.sort((a, b) => (b.datum || '').localeCompare(a.datum || ''));
+        prikaziVesti();
+        podesiFiltere();
+        
+    } catch (err) {
+        console.error('Greska:', err);
+        document.getElementById('news-container').innerHTML = 
+            '<p class="loading">Greska pri ucitavanju vesti.</p>';
+    }
+}
 
-        // Prva vest = featured
-        const featured = vesti[0];
-        const ostale = vesti.slice(1);
-
-        // Prikaz featured vesti
+function prikaziVesti() {
+    const featuredContainer = document.getElementById('featured-container');
+    const container = document.getElementById('news-container');
+    
+    const filtrirane = trenutnaKategorija === 'sve' 
+        ? sveVesti 
+        : sveVesti.filter(v => v.kategorija === trenutnaKategorija);
+    
+    if (filtrirane.length === 0) {
+        featuredContainer.innerHTML = '';
+        container.innerHTML = '<p class="loading">Nema vesti u ovoj kategoriji.</p>';
+        return;
+    }
+    
+    // Featured (samo na "sve" i ako ima > 1)
+    if (trenutnaKategorija === 'sve' && filtrirane.length > 1) {
+        const f = filtrirane[0];
         featuredContainer.innerHTML = `
-            <a href="vijest.html?i=${featured._idx}" class="featured-card">
+            <a href="vijest.html?i=${f._idx}" class="featured-card">
                 <div class="featured-image">
-                    <img src="${slikaUrl(featured)}" alt="${featured.naslov}" 
+                    <img src="${slikaUrl(f)}" alt="${f.naslov}" 
                          onerror="this.src='https://placehold.co/1200x600/1a3a5c/ffffff?text=Lokalne+Vesti'">
                 </div>
                 <div class="featured-body">
-                    <span class="kategorija">${featured.kategorija || 'Lokalno'}</span>
-                    <h1>${featured.naslov || 'Bez naslova'}</h1>
-                    <p>${kratakTekst(featured.tekst, 220)}</p>
+                    <span class="kategorija">${f.kategorija || 'Društvo'}</span>
+                    <h1>${f.naslov || 'Bez naslova'}</h1>
+                    <p>${kratakTekst(f.tekst, 220)}</p>
                     <div class="featured-meta">
-                        <span>${formatDatum(featured.datum)}</span>
-                        <span class="vise">Pročitaj celu vest →</span>
+                        <span>${formatDatum(f.datum)}</span>
+                        <span class="vise">Procitaj celu vest →</span>
                     </div>
                 </div>
             </a>
         `;
-
-        // Prikaz ostalih vesti
-        container.innerHTML = '';
-        ostale.forEach(vest => {
-            const article = document.createElement('a');
-            article.className = 'card-link';
-            article.href = `vijest.html?i=${vest._idx}`;
-            
-            article.innerHTML = `
-                <div class="card-image">
-                    <img src="${slikaUrl(vest)}" alt="${vest.naslov}" 
-                         onerror="this.src='https://placehold.co/400x250/1a3a5c/ffffff?text=Lokalne+Vesti'">
-                </div>
-                <div class="card-body">
-                    <span class="kategorija">${vest.kategorija || 'Lokalno'}</span>
-                    <h2>${vest.naslov || 'Bez naslova'}</h2>
-                    <p>${kratakTekst(vest.tekst, 140)}</p>
-                    <div class="card-meta">
-                        <span>${formatDatum(vest.datum)}</span>
-                    </div>
-                </div>
-            `;
-            
-            container.appendChild(article);
-        });
-        
-    } catch (err) {
-        console.error('Greška:', err);
-        container.innerHTML = '<p class="loading">Greška pri učitavanju vesti.</p>';
+    } else {
+        featuredContainer.innerHTML = '';
     }
+    
+    const ostale = (trenutnaKategorija === 'sve' && filtrirane.length > 1)
+        ? filtrirane.slice(1)
+        : filtrirane;
+    
+    container.innerHTML = '';
+    ostale.forEach(vest => {
+        const article = document.createElement('a');
+        article.className = 'card-link';
+        article.href = `vijest.html?i=${vest._idx}`;
+        
+        article.innerHTML = `
+            <div class="card-image">
+                <img src="${slikaUrl(vest)}" alt="${vest.naslov}" 
+                     onerror="this.src='https://placehold.co/400x250/1a3a5c/ffffff?text=Vesti'">
+            </div>
+            <div class="card-body">
+                <span class="kategorija">${vest.kategorija || 'Društvo'}</span>
+                <h2>${vest.naslov || 'Bez naslova'}</h2>
+                <p>${kratakTekst(vest.tekst, 140)}</p>
+                <div class="card-meta">
+                    <span>${formatDatum(vest.datum)}</span>
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(article);
+    });
+}
+
+function podesiFiltere() {
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            trenutnaKategorija = btn.dataset.kategorija;
+            prikaziVesti();
+        });
+    });
 }
 
 function slikaUrl(vest) {
     return vest.slika 
         ? `content/slike/${vest.slika}` 
-        : 'https://placehold.co/400x250/1a3a5c/ffffff?text=Lokalne+Vesti';
+        : 'https://placehold.co/400x250/1a3a5c/ffffff?text=Vesti';
 }
 
 function kratakTekst(tekst, duzina) {

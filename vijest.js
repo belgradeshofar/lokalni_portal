@@ -1,56 +1,59 @@
 async function ucitajVest() {
     const container = document.getElementById('article-container');
-    
     const params = new URLSearchParams(window.location.search);
+    const arhiva = params.get('arhiva');
     const indeks = parseInt(params.get('i'), 10);
     
     if (isNaN(indeks) || indeks < 0) {
-        container.innerHTML = '<p class="loading">Vest nije pronađena.</p>';
+        container.innerHTML = '<p class="loading">Vest nije pronadjena.</p>';
         return;
     }
     
+    let url;
+    if (arhiva) {
+        url = `content/arhiva/vesti-${arhiva}.json?t=` + Date.now();
+    } else {
+        url = 'content/vesti.json?t=' + Date.now();
+    }
+    
     try {
-        const response = await fetch('content/vesti.json?t=' + Date.now());
-        const vesti = await response.json();
+        const r = await fetch(url);
+        const vesti = await r.json();
         
         if (!vesti || !vesti[indeks]) {
-            container.innerHTML = '<p class="loading">Vest nije pronađena.</p>';
+            container.innerHTML = '<p class="loading">Vest nije pronadjena.</p>';
             return;
         }
         
         const vest = vesti[indeks];
-        document.title = (vest.naslov || 'Vest') + ' - Lokalne Vesti';
+        document.title = (vest.naslov || 'Vest') + ' - Vesti Srbija';
         
         container.innerHTML = `
             <article class="single-article">
-                <a href="index.html" class="back-link">← Nazad na naslovnu</a>
-                <span class="kategorija">${vest.kategorija || 'Lokalno'}</span>
+                <a href="${arhiva ? 'arhiva.html?d=' + arhiva : 'index.html'}" class="back-link">
+                    ← ${arhiva ? 'Nazad na arhivu' : 'Nazad na naslovnu'}
+                </a>
+                <span class="kategorija">${vest.kategorija || 'Društvo'}</span>
                 <h1>${vest.naslov || 'Bez naslova'}</h1>
                 <div class="article-meta">
                     <span>${formatDatum(vest.datum)}</span>
                     <span>·</span>
-                    <span>Lokalne Vesti</span>
+                    <span>Vesti Srbija</span>
                 </div>
                 <figure class="article-image">
-                    <img src="${slikaUrl(vest)}" alt="${vest.naslov}"
-                         onerror="this.src='https://placehold.co/1200x600/1a3a5c/ffffff?text=Lokalne+Vesti'">
+                    <img src="${vest.slika ? 'content/slike/' + vest.slika : 'https://placehold.co/1200x600/1a3a5c/ffffff?text=Vesti'}" 
+                         alt="${vest.naslov}"
+                         onerror="this.src='https://placehold.co/1200x600/1a3a5c/ffffff?text=Vesti'">
                 </figure>
                 <div class="article-body">
                     ${formatirajTekst(vest.tekst)}
                 </div>
             </article>
         `;
-        
-    } catch (err) {
-        console.error('Greška:', err);
-        container.innerHTML = '<p class="loading">Greška pri učitavanju vesti.</p>';
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = '<p class="loading">Greska pri ucitavanju vesti.</p>';
     }
-}
-
-function slikaUrl(vest) {
-    return vest.slika 
-        ? `content/slike/${vest.slika}` 
-        : 'https://placehold.co/1200x600/1a3a5c/ffffff?text=Lokalne+Vesti';
 }
 
 function formatDatum(datum) {
@@ -64,10 +67,7 @@ function formatDatum(datum) {
 function formatirajTekst(tekst) {
     if (!tekst) return '<p>Tekst nije dostupan.</p>';
     const ociscen = tekst.replace(/<[^>]+>/g, '').trim();
-    return ociscen
-        .split(/\n\n+/)
-        .map(p => `<p>${p.trim()}</p>`)
-        .join('');
+    return ociscen.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
 }
 
 ucitajVest();

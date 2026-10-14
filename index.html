@@ -3,40 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lokalne Vesti - Istočna Srbija</title>
-    <meta name="description" content="Najnovije vesti iz Istočne Srbije - Požarevac, Braničevo, Podunavlje">
+    <title>Vesti Srbija - Dnevne novosti</title>
+    <meta name="description" content="Najnovije dnevne vesti iz Srbije - Politika, Hronika, Sport, Ekonomija, Društvo, Svet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header class="site-header">
         <div class="header-inner">
             <a href="index.html" class="logo">
-                <span class="logo-mark">LV</span>
+                <span class="logo-mark">VS</span>
                 <span class="logo-text">
-                    <strong>Lokalne Vesti</strong>
-                    <small>Istočna Srbija</small>
+                    <strong>Vesti Srbija</strong>
+                    <small>Dnevne novosti</small>
                 </span>
             </a>
             <nav class="main-nav">
                 <a href="index.html" class="active">Naslovna</a>
-                <a href="#">Politika</a>
-                <a href="#">Sport</a>
-                <a href="#">Kultura</a>
-                <a href="#">Društvo</a>
-                <a href="#">Ekonomija</a>
+                <a href="arhiva.html">Arhiva</a>
             </nav>
         </div>
     </header>
 
-    <section class="topics-bar">
-        <div class="topics-inner">
-            <span class="topics-label">Teme:</span>
-            <a href="#">Požarevac</a>
-            <a href="#">Braničevo</a>
-            <a href="#">Podunavlje</a>
-            <a href="#">Smederevo</a>
-            <a href="#">Veliko Gradište</a>
-            <a href="#">Kučevo</a>
+    <section class="filter-bar">
+        <div class="filter-inner">
+            <button class="filter-btn active" data-kategorija="sve">Sve vesti</button>
+            <button class="filter-btn" data-kategorija="Politika">Politika</button>
+            <button class="filter-btn" data-kategorija="Hronika">Hronika</button>
+            <button class="filter-btn" data-kategorija="Sport">Sport</button>
+            <button class="filter-btn" data-kategorija="Ekonomija">Ekonomija</button>
+            <button class="filter-btn" data-kategorija="Društvo">Društvo</button>
+            <button class="filter-btn" data-kategorija="Svet">Svet</button>
         </div>
     </section>
 
@@ -48,16 +44,15 @@
     <footer class="site-footer">
         <div class="footer-inner">
             <div class="footer-brand">
-                <strong>Lokalne Vesti</strong>
-                <p>Nezavisni lokalni portal Istočne Srbije</p>
+                <strong>Vesti Srbija</strong>
+                <p>Dnevne novosti iz cele Srbije</p>
             </div>
             <div class="footer-links">
-                <a href="#">O nama</a>
-                <a href="#">Kontakt</a>
-                <a href="#">Impresum</a>
+                <a href="index.html">Naslovna</a>
+                <a href="arhiva.html">Arhiva</a>
             </div>
             <div class="footer-copy">
-                <p>© 2026 Lokalne Vesti · Sva prava zadržana</p>
+                <p>© 2026 Vesti Srbija · Sva prava zadrzana</p>
             </div>
         </div>
     </footer>

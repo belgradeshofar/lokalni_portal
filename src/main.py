@@ -19,7 +19,6 @@ OLLAMA_URL = "https://ollama.com/api/generate"
 OLLAMA_MODEL = "gemma4:31b-cloud"
 
 FREENEWS_HOSTS = ["www.kurir.rs", "www.novosti.rs", "www.alo.rs", "n1info.rs"]
-GOOGLE_NEWS_QUERIES = ["hronika", "društvo", "ekonomija", "sport"]
 
 OUTPUT_FOLDER = "content"
 VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
@@ -27,19 +26,61 @@ ARHIVA_FOLDER = os.path.join(OUTPUT_FOLDER, "arhiva")
 ARHIVA_INDEX = os.path.join(ARHIVA_FOLDER, "index.json")
 
 MAX_VESTI_U_GLAVNOM = 200
-MAX_NOVIH_PO_POKRETANJU = 40
-VESTI_PO_IZVORU = 10
+MAX_NOVIH_PO_POKRETANJU = 50
+VESTI_PO_IZVORU = 8
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 KATEGORIJE = ["Hronika", "Društvo", "Ekonomija", "Sport"]
 
-KLJUCNE_RECI = {
-    "Hronika": ["hapšenje", "uhapšen", "priveden", "sud", "tužilaštvo", "presuda", "nesreća", "saobraćajna", "požar", "eksplozija", "napad", "ubistvo", "krađa", "razbojništvo", "policija", "mup", "istraga", "zločin", "kriminal"],
-    "Društvo": ["vlada", "ministarstvo", "opština", "grad", "skupština", "izbori", "protest", "manifestacija", "obeležavanje", "vremenska", "poplava", "sneg", "oluja", "vrućina", "zdravstvo", "obrazovanje", "škola", "fakultet", "studenti"],
-    "Ekonomija": ["cena", "dinara", "evra", "inflacija", "plata", "penzija", "budžet", "investicija", "fabrika", "kompanija", "privreda", "poljoprivreda", "turizam", "sajam", "izvoz", "uvoz", "porez"],
-    "Sport": ["crvena zvezda", "partizan", "reprezentacija", "derbi", "olimpijada", "svetsko prvenstvo"],
+# Vise pretraga po kategoriji - svaka je odvojeni poziv
+PRETRAGE = {
+    "Hronika": [
+        "hapšenje uhapšen priveden",
+        "sud tužilaštvo presuda",
+        "saobraćajna nesreća poginuo",
+        "požar eksplozija",
+        "ubistvo napad",
+        "krađa razbojništvo",
+        "policija istraga droga",
+        "sudjenje optužnica pritvor",
+    ],
+    "Društvo": [
+        "vlada ministarstvo",
+        "opština grad skupština",
+        "izbori protest",
+        "zdravstvo obrazovanje škola",
+        "poplava sneg oluja vreme",
+        "studenti fakultet",
+    ],
+    "Ekonomija": [
+        "cena dinara evra",
+        "inflacija plata penzija",
+        "budžet investicija",
+        "fabrika kompanija privreda",
+        "poljoprivreda turizam sajam",
+    ],
+    "Sport": [
+        "crvena zvezda partizan",
+        "reprezentacija utakmica",
+        "derbi fudbal košarka",
+    ],
 }
+
+# Specificne Google News pretrage za Hroniku
+GOOGLE_NEWS_QUERIES = [
+    ("hronika", "Hronika"),
+    ("saobraćajna nesreća", "Hronika"),
+    ("požar", "Hronika"),
+    ("hapšenje", "Hronika"),
+    ("sud presuda", "Hronika"),
+    ("ubistvo", "Hronika"),
+    ("krađa", "Hronika"),
+    ("droga zaplena", "Hronika"),
+    ("društvo Srbija", "Društvo"),
+    ("ekonomija Srbija", "Ekonomija"),
+    ("sport Srbija", "Sport"),
+]
 
 ATMOSFERA = {
     "Hronika": ["night", "dusk", "foggy", "dark"],
@@ -48,12 +89,38 @@ ATMOSFERA = {
     "Sport": ["floodlights", "night", "dramatic", "stadium"],
 }
 
+# Reci koje UKAZUJU da vest MORA biti Hronika (za validaciju)
+HRONIKA_KLJUCNE = [
+    "uhapšen", "uhapsen", "hapšenje", "hapsenje", "priveden", "pritvor",
+    "sud", "tužilaštvo", "tuzilastvo", "presuda", "optužnica", "optuznica",
+    "nesreća", "nesreca", "saobraćajna", "saobracajna", "poginuo", "povređen", "povredjen",
+    "požar", "pozar", "eksplozija", "ubistvo", "ubica", "napad", "krađa", "kradja",
+    "razbojništvo", "razbojnistvo", "policija", "mup", "istraga", "droga",
+    "narkotik", "zaplena", "kriminal", "zločin", "zlocin", "lopov", "pljačka", "pljacka"
+]
+
 SISTEM_UPUTSTVO = """Ti si iskusni novinar i urednik informativnog portala u Srbiji.
 Tvoj zadatak: od sirovih informacija sa drugih portala napisati NOVU, originalnu, profesionalnu DNEVNU VEST.
 
 === NAJVAZNIJE PRAVILO ===
-AKO NISI 100% SIGURAN DA VEST TREBA ODBITI, PRIHVATI JE.
-Bolje prihvatiti 10 losih nego odbiti 1 dobru.
+PRIHVATI vest u 95% slucajeva. Odbij SAMO jasnu analizu, kolumnu, intervju ili showbiz.
+
+=== KATEGORIZACIJA (VRLO VAZNO) ===
+Ako naslov ili tekst sadrži ove reci, kategorija MORA biti HRONIKA:
+- uhapšen, hapšenje, priveden, pritvor, sud, tužilaštvo, presuda, optužnica
+- nesreća, saobraćajna, poginuo, povređen, požar, eksplozija
+- ubistvo, napad, krađa, razbojništvo, policija, istraga, droga, zaplena
+
+Primer:
+- "Sud osudio muškarca na 3 godine" -> HRONIKA (ne Društvo)
+- "Policija uhapsila osumnjičenog" -> HRONIKA
+- "Saobraćajna nesreća kod Beograda" -> HRONIKA
+- "Požar u stambenoj zgradi" -> HRONIKA
+
+Ako vest nije Hronika, onda:
+- DRUSTVO: vlada, opština, izbori, protest, zdravstvo, škola, vreme
+- EKONOMIJA: cene, penzije, plate, budžet, investicije, privreda
+- SPORT: utakmice, rezultati, Zvezda, Partizan, reprezentacija
 
 === GRAMATIKA SRPSKOG JEZIKA ===
 Tvoj tekst MORA biti GRAMATICKI ISPRAVAN. Ne izmisljaj reci.
@@ -71,23 +138,16 @@ NE KOPIRAJ originalne recenice. Napisi SVOJIM RECIMA.
 Promeni red reci, koristi sinonime (uhapsiti->privesti), promeni strukturu.
 Zadrzi SVE cinjenice: imena, datume, brojeve, mesta.
 
-=== STAMP PRIHVATI VESTI ===
-U 99% slucajeva PRIHVATI vest. ODBIJ SAMO ako je jasno:
+=== STAMP ODBIJ VESTI (samo ovi slucajevi) ===
 - Cista analiza ili kolumna bez dogadjaja
 - Intervju ili razgovor
 - Showbiz, estrada, rijaliti zvezde
 - Lifestyle tema (vencanja, putovanja, moda)
 - Sportski prelazni rok bez utakmice
 
-=== STAMP ODBIJ VESTI ===
-Ako je vest: hapsenje, sud, nesreca, pozar, sudar, utakmica, izbori, vlada,
-cene, vreme, poplava, požar, ubistvo, kradja, protest, manifestacija -> PRIHVATI.
-
 === FORMAT ODGOVORA ===
-U 99% slucajeva vrati: {"naslov": "...", "tekst": "...", "kategorija": "..."}
+U 95% slucajeva vrati: {"naslov": "...", "tekst": "...", "kategorija": "..."}
 Samo u izuzetnim slucajevima vrati: {"preskoci": true}
-
-Kategorija: Hronika, Drustvo, Ekonomija ili Sport.
 
 === PRAVILA ZA NASLOV ===
 1. Jasan, informativan (50-90 znakova).
@@ -127,39 +187,51 @@ def prikupi_vesti():
 
     # 1. Prikupi kandidate
     kandidati = []
-    for host in FREENEWS_HOSTS:
-        for kategorija, reci in KLJUCNE_RECI.items():
-            print(f"Dohvatam: {host} / {kategorija}...")
-            try:
-                q = " ".join(reci[:3])
-                params = {"host": host, "q": q, "date": "24h", "size": VESTI_PO_IZVORU, "sort": "date", "fields": "title,url,published_at,description,image"}
-                r = requests.get("https://freenewsapi.ai/v1/search", params=params, timeout=30)
-                if r.status_code == 200:
-                    for item in r.json().get("results", []):
-                        link = item.get("url")
-                        if link in postojeci_linkovi:
-                            continue
-                        kandidati.append({
-                            "naslov": item.get("title", ""),
-                            "tekst": item.get("description", "") or "",
-                            "link": link,
-                            "izvor": host,
-                            "kategorija": kategorija,
-                        })
-            except Exception as e:
-                print(f"  Greska: {e}")
-            time.sleep(0.3)
+    seen_links = set()
 
-    for query in GOOGLE_NEWS_QUERIES:
-        print(f"Dohvatam: Google News / {query}...")
+    # FreeNewsAPI - vise pretraga po kategoriji
+    for host in FREENEWS_HOSTS:
+        for kategorija, pretrage in PRETRAGE.items():
+            for pretraga in pretrage:
+                try:
+                    params = {
+                        "host": host,
+                        "q": pretraga,
+                        "date": "24h",
+                        "size": VESTI_PO_IZVORU,
+                        "sort": "date",
+                        "fields": "title,url,published_at,description,image"
+                    }
+                    r = requests.get("https://freenewsapi.ai/v1/search", params=params, timeout=30)
+                    if r.status_code == 200:
+                        for item in r.json().get("results", []):
+                            link = item.get("url")
+                            if not link or link in postojeci_linkovi or link in seen_links:
+                                continue
+                            seen_links.add(link)
+                            kandidati.append({
+                                "naslov": item.get("title", ""),
+                                "tekst": item.get("description", "") or "",
+                                "link": link,
+                                "izvor": host,
+                                "kategorija": kategorija,
+                            })
+                except Exception as e:
+                    print(f"  Greska {host}/{pretraga}: {e}")
+                time.sleep(0.2)
+
+    print(f"Nakon FreeNewsAPI: {len(kandidati)} kandidata")
+
+    # Google News - specificne pretrage
+    for query, kat in GOOGLE_NEWS_QUERIES:
         try:
             url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=sr&gl=RS&ceid=RS:sr"
             feed = feedparser.parse(url)
             for entry in feed.entries[:VESTI_PO_IZVORU]:
                 link = entry.link
-                if link in postojeci_linkovi:
+                if link in postojeci_linkovi or link in seen_links:
                     continue
-                kat = {"hronika": "Hronika", "društvo": "Društvo", "ekonomija": "Ekonomija", "sport": "Sport"}.get(query, "Društvo")
+                seen_links.add(link)
                 kandidati.append({
                     "naslov": html.unescape(entry.title),
                     "tekst": html.unescape(entry.get('summary', '')),
@@ -168,11 +240,24 @@ def prikupi_vesti():
                     "kategorija": kat,
                 })
         except Exception as e:
-            print(f"  Greska: {e}")
-        time.sleep(0.3)
+            print(f"  Google News greska ({query}): {e}")
+        time.sleep(0.2)
 
-    print(f"\nUkupno kandidata: {len(kandidati)}")
-    kandidati = kandidati[:MAX_NOVIH_PO_POKRETANJU]
+    print(f"Nakon Google News: {len(kandidati)} kandidata")
+
+    # Mesaj kandidate - prioritet Hronika (da ne bude 15 sport vesti pre hronike)
+    hronika_kand = [k for k in kandidati if k["kategorija"] == "Hronika"]
+    ostali_kand = [k for k in kandidati if k["kategorija"] != "Hronika"]
+
+    random.shuffle(hronika_kand)
+    random.shuffle(ostali_kand)
+
+    # 60% Hronika, 40% ostali
+    max_hronika = int(MAX_NOVIH_PO_POKRETANJU * 0.6)
+    kandidati = hronika_kand[:max_hronika] + ostali_kand[:MAX_NOVIH_PO_POKRETANJU - max_hronika]
+    random.shuffle(kandidati)
+
+    print(f"\nUkupno kandidata: {len(kandidati)} (Hronika: {len(hronika_kand)})")
     print(f"Obradjujem: {len(kandidati)}")
 
     # 2. Obradi svaku vest
@@ -183,7 +268,7 @@ def prikupi_vesti():
     koriscene_slike = set()
 
     for i, kand in enumerate(kandidati, 1):
-        print(f"\n[{i}/{len(kandidati)}] {kand['naslov'][:60]}...")
+        print(f"\n[{i}/{len(kandidati)}] ({kand['kategorija']}) {kand['naslov'][:55]}...")
         try:
             rezultat = napisi_vest(kand["naslov"], kand["tekst"])
             if not rezultat:
@@ -191,9 +276,17 @@ def prikupi_vesti():
                 greske += 1
                 continue
             if rezultat.get("preskoci"):
-                print(f"  Preskacem (nije dnevna vest): {kand['naslov'][:60]}")
+                print(f"  Preskacem (nije dnevna vest)")
                 odbijeno += 1
                 continue
+
+            # Validacija kategorije: ako naslov sadrzi hronika reci, MORA biti Hronika
+            naslov_lower = rezultat["naslov"].lower()
+            tekst_lower = rezultat["tekst"][:500].lower()
+            if any(rec in naslov_lower or rec in tekst_lower for rec in HRONIKA_KLJUCNE):
+                if rezultat["kategorija"] != "Hronika":
+                    print(f"  [KOREKCIJA] {rezultat['kategorija']} -> Hronika")
+                    rezultat["kategorija"] = "Hronika"
 
             keywords_en = napravi_kljucne_reci_ollama(rezultat["naslov"], rezultat["kategorija"])
             print(f"  Keywords: {keywords_en}")
@@ -207,7 +300,7 @@ def prikupi_vesti():
                     break
 
             if slika_url:
-                print(f"  [SLIKA] {slika_url[:80]}")
+                print(f"  [SLIKA] {slika_url[:70]}")
             else:
                 print(f"  Slika nije pronadjena")
 
@@ -302,8 +395,10 @@ def napisi_vest(originalni_naslov, originalni_tekst):
     if not originalni_naslov:
         return None
     korisnicki = f"""Napisi novu dnevnu vest po pravilima.
-ZAPAMTI: PRIHVATI u 99% slucajeva. Odbij samo jasnu analizu/intervju/showbiz.
-Gramatika MORA biti ispravna.
+ZAPAMTI:
+1. PRIHVATI u 95% slucajeva.
+2. Ako naslov sadrzi: uhapšen, sud, nesreća, požar, ubistvo, policija, krađa -> kategorija HRONIKA.
+3. Gramatika MORA biti ispravna.
 
 --- ORIGINALNI NASLOV ---
 {originalni_naslov}

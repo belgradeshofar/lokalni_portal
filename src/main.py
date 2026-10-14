@@ -12,19 +12,25 @@ from datetime import datetime
 # KONFIGURACIJA
 # =====================================================================
 
+# Ollama Cloud
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "")
 OLLAMA_URL = "https://ollama.com/api/generate"
-OLLAMA_MODEL = "olivilo/zora:v1.12-q8"
+OLLAMA_MODEL = "gemma4:31b-cloud" # Besplatan model na Ollama Cloud-u
 
-# RSS feedovi (samo provereni koji rade)
-RSS_FEEDS = [
-    ("Kurir", "https://www.kurir.rs/rss/vesti/"),
-    ("Novosti", "https://www.novosti.rs/rss/2-Sve%20vesti"),
-    ("Alo", "https://www.alo.rs/rss/"),
-    ("Telegraf", "https://www.telegraf.rs/rss/vesti"),
-    ("Danas", "https://www.danas.rs/feed/"),
-    ("N1", "https://n1info.rs/feed/"),
-    ("Blic", "https://news.google.com/rss/search?q=site:blic.rs&hl=sr&gl=RS&ceid=RS:sr"),
+# FreeNewsAPI (besplatan, bez kljuca)
+FREENEWS_HOSTS = [
+    "www.kurir.rs",
+    "www.novosti.rs",
+    "www.alo.rs",
+    "n1info.rs",
+]
+
+# Google News RSS upiti
+GOOGLE_NEWS_QUERIES = [
+    "hronika",
+    "društvo",
+    "ekonomija",
+    "sport",
 ]
 
 OUTPUT_FOLDER = "content"
@@ -34,16 +40,42 @@ ARHIVA_INDEX = os.path.join(ARHIVA_FOLDER, "index.json")
 SLIKE_FOLDER = os.path.join(OUTPUT_FOLDER, "slike")
 
 MAX_VESTI_U_GLAVNOM = 200
-MAX_NOVIH_PO_POKRETANJU = 12
-VESTI_PO_FEEDU = 6
+MAX_NOVIH_PO_POKRETANJU = 40 # Povecano na 40
+VESTI_PO_IZVORU = 10 # Uzimamo do 10 vesti po izvoru
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-KATEGORIJE = ["Politika", "Hronika", "Sport", "Ekonomija", "Društvo", "Svet"]
+KATEGORIJE = ["Hronika", "Društvo", "Ekonomija", "Sport"]
 
+# Kljucne reci za filtriranje
+KLJUCNE_RECI = {
+    "Hronika": [
+        "hapšenje", "uhapšen", "priveden", "sud", "tužilaštvo", "presuda",
+        "nesreća", "saobraćajna", "požar", "eksplozija", "napad", "ubistvo",
+        "krađa", "razbojništvo", "policija", "mup", "istraga", "zločin",
+        "kriminal", "droga", "oružje", "pritvor", "optužnica"
+    ],
+    "Društvo": [
+        "vlada", "ministarstvo", "opština", "grad", "skupština", "izbori",
+        "protest", "manifestacija", "obeležavanje", "vremenska", "poplava",
+        "sneg", "oluja", "vrućina", "zdravstvo", "obrazovanje", "škola",
+        "fakultet", "studenti", "gradjani", "lokalna", "samouprava"
+    ],
+    "Ekonomija": [
+        "cena", "dinara", "evra", "inflacija", "plata", "penzija", "budžet",
+        "investicija", "fabrika", "kompanija", "privreda", "poljoprivreda",
+        "turizam", "sajam", "izvoz", "uvoz", "porez", "subvencija", "kredit"
+    ],
+    "Sport": [
+        "utakmica", "pobeda", "poraz", "rezultat", "gol", "koš", "tenis",
+        "fudbal", "košarka", "odbojka", "rukomet", "atletika", "olimpijada",
+        "medalja", "prvenstvo", "liga", "kup", "reprezentacija", "klub",
+        "igrač", "trener", "stadion", "takmičenje"
+    ],
+}
 
 # =====================================================================
-# AI PROMPT (sistemsko uputstvo)
+# AI PROMPT
 # =====================================================================
 
 SISTEM_UPUTSTVO = """Ti si iskusni novinar i urednik informativnog portala u Srbiji.
@@ -103,8 +135,7 @@ Ako prihvatas vest, vrati ISKLJUCIVO JSON:
 Ako odbijas vest, vrati:
 {"preskoci": true}
 
-Kategorija mora biti JEDNA od: Politika, Hronika, Sport, Ekonomija, Drustvo, Svet."""
-
+Kategorija mora biti JEDNA od: Hronika, Drustvo, Ekonomija, Sport."""
 
 # =====================================================================
 # GLAVNA FUNKCIJA
@@ -112,7 +143,7 @@ Kategorija mora biti JEDNA od: Politika, Hronika, Sport, Ekonomija, Drustvo, Sve
 
 def prikupi_vesti():
     print(f"--- START ---")
-    print(f"Aktivni AI: ZORA (Ollama Cloud)")
+    print(f"Aktivni AI: OLLAMA CLOUD ({OLLAMA_MODEL})")
     print(f"Ollama API key prisutan: {'DA' if OLLAMA_API_KEY else 'NE'}")
 
     if not OLLAMA_API_KEY:
@@ -123,43 +154,80 @@ def prikupi_vesti():
     print(f"Postojecih vesti u bazi: {len(postojece)}")
     postojeci_linkovi = {v.get("link") for v in postojece}
 
-    # 1. Prikupi kandidate
     kandidati = []
-    for naziv, url in RSS_FEEDS:
-        print(f"\nPovezujem se na: {naziv}...")
-        try:
-            feed = feedparser.parse(url)
-            if feed.bozo or not feed.entries:
-                print(f"  Nema vesti.")
-                continue
 
-            broj = 0
-            for entry in feed.entries[:VESTI_PO_FEEDU]:
+    # 1. FreeNewsAPI
+    for host in FREENEWS_HOSTS:
+        for kategorija, reci in KLJUCNE_RECI.items():
+            print(f"Dohvatam sa {host} za kategoriju: {kategorija}...")
+            try:
+                # Uzimamo 3 kljucne reci za pretragu
+                q = " ".join(reci[:3])
+                params = {
+                    "host": host,
+                    "q": q,
+                    "date": "24h",
+                    "size": VESTI_PO_IZVORU,
+                    "sort": "date",
+                    "fields": "title,url,published_at,description,image",
+                }
+                r = requests.get("https://freenewsapi.ai/v1/search", params=params, timeout=30)
+                if r.status_code == 200:
+                    data = r.json()
+                    for item in data.get("results", []):
+                        link = item.get("url")
+                        if link in postojeci_linkovi:
+                            continue
+                        kandidati.append({
+                            "naslov": item.get("title", ""),
+                            "tekst": item.get("description", "") or "",
+                            "link": link,
+                            "izvor": host,
+                            "slika_url": item.get("image"),
+                            "kategorija": kategorija,
+                        })
+                    print(f"  Pronadeno: {len(data.get('results', []))}")
+                else:
+                    print(f"  Greska: {r.status_code}")
+            except Exception as e:
+                print(f"  Greska: {e}")
+            time.sleep(0.5)
+
+    # 2. Google News RSS
+    for query in GOOGLE_NEWS_QUERIES:
+        print(f"Dohvatam Google News za: {query}...")
+        try:
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=sr&gl=RS&ceid=RS:sr"
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:VESTI_PO_IZVORU]:
                 link = entry.link
                 if link in postojeci_linkovi:
                     continue
-
-                originalni_naslov = html.unescape(entry.title)
-                originalni_tekst = html.unescape(entry.get('summary', entry.get('description', '')))
-
+                # Kategorija na osnovu upita
+                kat = "Hronika"
+                if "društvo" in query:
+                    kat = "Društvo"
+                elif "ekonomija" in query:
+                    kat = "Ekonomija"
+                elif "sport" in query:
+                    kat = "Sport"
                 kandidati.append({
-                    "naslov": originalni_naslov,
-                    "tekst": originalni_tekst,
+                    "naslov": html.unescape(entry.title),
+                    "tekst": html.unescape(entry.get('summary', '')),
                     "link": link,
-                    "izvor": naziv,
+                    "izvor": "Google News",
+                    "slika_url": None,
+                    "kategorija": kat,
                 })
-                broj += 1
-
-            print(f"  Novih kandidata: {broj}")
+            print(f"  Pronadeno: {len(feed.entries[:VESTI_PO_IZVORU])}")
         except Exception as e:
             print(f"  Greska: {e}")
-            continue
+        time.sleep(0.5)
 
     print(f"\nUkupno novih kandidata: {len(kandidati)}")
     kandidati = kandidati[:MAX_NOVIH_PO_POKRETANJU]
     print(f"Obradjujem prvih: {len(kandidati)}")
 
-    # 2. Obradi svaki kandidat
     nove_vesti = []
     for i, kand in enumerate(kandidati, 1):
         print(f"\n[{i}/{len(kandidati)}] {kand['naslov'][:60]}...")
@@ -172,7 +240,6 @@ def prikupi_vesti():
                 print(f"  Preskacem (nije dnevna vest)")
                 continue
 
-            # Slika preko Pollinations (bez originala)
             ime_slike = generisi_sliku_pollinations(rezultat["naslov"], rezultat["kategorija"])
 
             vest = {
@@ -192,7 +259,6 @@ def prikupi_vesti():
 
     print(f"\nNovih vesti uspesno: {len(nove_vesti)}")
 
-    # 3. Spoji sa postojecim
     sve = nove_vesti + postojece
     videno = set()
     unikatne = []
@@ -205,7 +271,6 @@ def prikupi_vesti():
     unikatne.sort(key=lambda x: x.get("datum", ""), reverse=True)
     finalne = unikatne[:MAX_VESTI_U_GLAVNOM]
 
-    # 4. Sacuvaj
     os.makedirs(SLIKE_FOLDER, exist_ok=True)
     os.makedirs(ARHIVA_FOLDER, exist_ok=True)
 
@@ -213,20 +278,17 @@ def prikupi_vesti():
         json.dump(finalne, f, ensure_ascii=False, indent=2)
     print(f"\nSacuvano {len(finalne)} vesti u {VESTI_FAJL}")
 
-    # 5. Sacuvaj arhivu
     sacuvaj_arhivu(finalne)
 
     print(f"\n--- KRAJ ---")
 
-
 # =====================================================================
-# AI OBRADA (Ollama Cloud + Zora)
+# AI OBRADA
 # =====================================================================
 
 def napisi_vest(originalni_naslov, originalni_tekst):
     if not originalni_naslov:
         return None
-
     korisnicki = f"""Napravi novu dnevnu vest po pravilima iz sistemskog uputstva.
 
 --- ORIGINALNI NASLOV ---
@@ -236,21 +298,17 @@ def napisi_vest(originalni_naslov, originalni_tekst):
 {originalni_tekst[:3000]}
 
 Vrati iskljucivo JSON:"""
-
     odgovor = pozovi_ollama(SISTEM_UPUTSTVO, korisnicki)
     if not odgovor:
         return None
-
     rezultat = parsiraj_json(odgovor)
     if not rezultat:
         return None
     if rezultat.get("preskoci"):
         return rezultat
-
     if not rezultat.get("naslov") or not rezultat.get("tekst"):
         return None
-
-    kat = rezultat.get("kategorija", "Drustvo").strip()
+    kat = rezultat.get("kategorija", "Društvo").strip()
     if kat not in KATEGORIJE:
         for k in KATEGORIJE:
             if k.lower() in kat.lower():
@@ -258,17 +316,13 @@ Vrati iskljucivo JSON:"""
                 break
         else:
             kat = "Društvo"
-
     rezultat["kategorija"] = kat
     rezultat["naslov"] = ocisti_tekst(rezultat["naslov"])
     rezultat["tekst"] = ocisti_tekst(rezultat["tekst"])
-
     print(f"  [OK] {rezultat['kategorija']} | {len(rezultat['naslov'])} zn naslov | {len(rezultat['tekst'])} zn tekst")
     return rezultat
 
-
 def pozovi_ollama(sistem, korisnik):
-    """Poziva Ollama Cloud sa retry logikom."""
     headers = {
         "Authorization": f"Bearer {OLLAMA_API_KEY}",
         "Content-Type": "application/json",
@@ -281,7 +335,6 @@ def pozovi_ollama(sistem, korisnik):
         "format": "json",
         "options": {"temperature": 0.85, "num_ctx": 8192, "num_predict": 2500},
     }
-
     for pokusaj in range(3):
         try:
             r = requests.post(OLLAMA_URL, json=payload, headers=headers, timeout=180)
@@ -297,7 +350,6 @@ def pozovi_ollama(sistem, korisnik):
         time.sleep(5)
     return ""
 
-
 def parsiraj_json(tekst):
     if not tekst:
         return None
@@ -305,7 +357,6 @@ def parsiraj_json(tekst):
     ociscen = re.sub(r'^```json\s*', '', ociscen)
     ociscen = re.sub(r'^```\s*', '', ociscen)
     ociscen = re.sub(r'\s*```$', '', ociscen)
-
     try:
         return json.loads(ociscen)
     except json.JSONDecodeError:
@@ -316,7 +367,6 @@ def parsiraj_json(tekst):
             except json.JSONDecodeError:
                 pass
     return None
-
 
 def ocisti_tekst(tekst):
     if not tekst:
@@ -336,45 +386,28 @@ def ocisti_tekst(tekst):
     tekst = re.sub(r'\n{3,}', '\n\n', tekst)
     return tekst.strip()
 
-
 # =====================================================================
-# SLIKE (Pollinations - besplatno, bez kartice)
+# SLIKE
 # =====================================================================
 
 def generisi_sliku_pollinations(naslov, kategorija):
-    """Generise sliku preko Pollinations.AI (besplatno, bez API kljuca)."""
     if not naslov:
         return ""
-
-    # Kategorijski promptovi - simbolične apstraktne slike
     prompt_baza = {
-        "Politika": "government building, dramatic sky, moody atmosphere",
         "Hronika": "empty street at night, blue police lights, moody fog",
-        "Sport": "empty stadium, sports field, dramatic floodlights",
-        "Ekonomija": "industrial buildings, factory, dusk sky",
         "Društvo": "city street, morning fog, moody atmosphere",
-        "Svet": "world map, dramatic clouds, atmosphere",
+        "Ekonomija": "industrial buildings, factory, dusk sky",
+        "Sport": "empty stadium, sports field, dramatic floodlights",
     }
     baza = prompt_baza.get(kategorija, "small town, morning fog, atmospheric")
-
-    # Dodaj kontekst iz naslova (prevodimo na engleski pomocu kljucnih reci iz naslova)
-    # Ali bez ljudi, bez lica
     finalni = f"{baza}, no people, no faces, cinematic, atmospheric, landscape, 4k, photorealistic"
-
     encoded = urllib.parse.quote(finalni)
     url = "https://image.pollinations.ai/prompt/" + encoded
-
     params = {
-        "width": 800,
-        "height": 500,
-        "nologo": "true",
-        "model": "flux",
-        "seed": int(time.time()),
+        "width": 800, "height": 500, "nologo": "true", "model": "flux", "seed": int(time.time()),
     }
-
     ime_fajla = f"slika_{int(time.time()*1000)}.jpg"
     putanja = os.path.join(SLIKE_FOLDER, ime_fajla)
-
     for pokusaj in range(3):
         try:
             print(f"    Generisem sliku (pokusaj {pokusaj+1}/3)...")
@@ -394,10 +427,8 @@ def generisi_sliku_pollinations(naslov, kategorija):
         except Exception as e:
             print(f"    [GRESKA] {e}")
             time.sleep(10)
-
     print(f"    Slika nije generisana.")
     return ""
-
 
 # =====================================================================
 # ARHIVA
@@ -412,11 +443,9 @@ def ucitaj_postojece():
     except Exception:
         return []
 
-
 def sacuvaj_arhivu(sve_vesti):
     danas = datetime.now().strftime("%Y-%m-%d")
     fajl_arhive = os.path.join(ARHIVA_FOLDER, f"vesti-{danas}.json")
-
     postojeca_arhiva = []
     if os.path.exists(fajl_arhive):
         try:
@@ -424,26 +453,20 @@ def sacuvaj_arhivu(sve_vesti):
                 postojeca_arhiva = json.load(f)
         except Exception:
             pass
-
     videno = {v.get("link") for v in postojeca_arhiva}
     for v in sve_vesti:
         if v.get("link") not in videno:
             postojeca_arhiva.append(v)
             videno.add(v.get("link"))
-
     postojeca_arhiva.sort(key=lambda x: x.get("datum", ""), reverse=True)
-
     with open(fajl_arhive, "w", encoding="utf-8") as f:
         json.dump(postojeca_arhiva, f, ensure_ascii=False, indent=2)
     print(f"Arhiva sacuvana: {fajl_arhive} ({len(postojeca_arhiva)} vesti)")
-
     azuriraj_arhiva_index()
-
 
 def azuriraj_arhiva_index():
     if not os.path.exists(ARHIVA_FOLDER):
         return
-
     datumi = []
     for f in os.listdir(ARHIVA_FOLDER):
         if f.startswith("vesti-") and f.endswith(".json"):
@@ -455,12 +478,9 @@ def azuriraj_arhiva_index():
                 datumi.append({"datum": datum, "broj": broj, "fajl": f})
             except Exception:
                 pass
-
     datumi.sort(key=lambda x: x["datum"], reverse=True)
-
     with open(ARHIVA_INDEX, "w", encoding="utf-8") as f:
         json.dump(datumi, f, ensure_ascii=False, indent=2)
-
 
 if __name__ == "__main__":
     prikupi_vesti()

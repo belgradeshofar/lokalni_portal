@@ -41,7 +41,6 @@ function prikaziVesti() {
         return;
     }
     
-    // Featured (samo na "sve" i ako ima > 1)
     if (trenutnaKategorija === 'sve' && filtrirane.length > 1) {
         const f = filtrirane[0];
         featuredContainer.innerHTML = `
@@ -106,9 +105,10 @@ function podesiFiltere() {
 }
 
 function slikaUrl(vest) {
-    return vest.slika 
-        ? `content/slike/${vest.slika}` 
-        : 'https://placehold.co/400x250/1a3a5c/ffffff?text=Vesti';
+    if (!vest.slika) {
+        return 'https://placehold.co/400x250/1a3a5c/ffffff?text=Vesti';
+    }
+    return vest.slika;
 }
 
 function kratakTekst(tekst, duzina) {

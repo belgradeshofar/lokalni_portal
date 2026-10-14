@@ -41,7 +41,7 @@ async function ucitajVest() {
                     <span>Vesti Srbija</span>
                 </div>
                 <figure class="article-image">
-                    <img src="${vest.slika ? 'content/slike/' + vest.slika : 'https://placehold.co/1200x600/1a3a5c/ffffff?text=Vesti'}" 
+                    <img src="${slikaUrl(vest)}" 
                          alt="${vest.naslov}"
                          onerror="this.src='https://placehold.co/1200x600/1a3a5c/ffffff?text=Vesti'">
                 </figure>
@@ -54,6 +54,13 @@ async function ucitajVest() {
         console.error(e);
         container.innerHTML = '<p class="loading">Greska pri ucitavanju vesti.</p>';
     }
+}
+
+function slikaUrl(vest) {
+    if (!vest.slika) {
+        return 'https://placehold.co/1200x600/1a3a5c/ffffff?text=Vesti';
+    }
+    return vest.slika;
 }
 
 function formatDatum(datum) {

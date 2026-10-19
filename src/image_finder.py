@@ -1,188 +1,397 @@
+import feedparser
 import os
+import json
+import time
 import requests
+import html
+import re
 import random
+import urllib.parse
+from datetime import datetime
+from google import genai
+from google.genai import types
+from image_finder import pronadji_sliku, reset_rotacije
 
-USER_AGENT = "VestiSrbija/1.0 (https://github.com/belgradeshofar/lokalni_portal)"
+# =====================================================================
+# KONFIGURACIJA
+# =====================================================================
 
-ZABRANJENE_RECI_U_NAZIVU = [
-    "portrait", "face", "selfie", "man_", "_man", "woman",
-    "people", "person", "crowd", "guy", "lady", "boy", "girl",
-    "president", "minister", "politician", "actor", "singer",
-    "human", "male", "female"
-]
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Provereno dobre slike po kategoriji (Wikimedia/Openverse pretrage koje rade)
-FALLBACK_PRETRAGE = {
-    "Hronika": [
-        "police car night lights",
-        "courthouse building exterior",
-        "city street fog night",
-        "prison fence barbed wire",
-        "police station building",
-    ],
-    "Društvo": [
-        "city hall building exterior",
-        "government building columns",
-        "public square fountain",
-        "old town street morning",
-        "courthouse columns facade",
-    ],
-    "Ekonomija": [
-        "factory chimney industrial",
-        "warehouse industrial building",
-        "cargo port containers",
-        "business district skyline",
-        "power plant industrial",
-    ],
-    "Sport": [
-        "football stadium floodlights",
-        "basketball arena interior",
-        "tennis court net empty",
-        "athletics running track",
-        "swimming pool lanes indoor",
-        "empty football pitch grass",
-    ],
+AI_MODEL = "gemini-2.5-flash"
+
+FREENEWS_HOSTS = ["www.kurir.rs", "www.novosti.rs", "www.alo.rs", "n1info.rs"]
+
+OUTPUT_FOLDER = "content"
+VESTI_FAJL = os.path.join(OUTPUT_FOLDER, "vesti.json")
+ARHIVA_FOLDER = os.path.join(OUTPUT_FOLDER, "arhiva")
+ARHIVA_INDEX = os.path.join(ARHIVA_FOLDER, "index.json")
+
+MAX_VESTI_U_GLAVNOM = 200
+MAX_NOVIH_PO_POKRETANJU = 30
+VESTI_PO_IZVORU = 8
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+KATEGORIJE = ["Hronika", "Društvo", "Ekonomija", "Sport"]
+
+PRETRAGE = {
+    "Hronika": ["hapšenje uhapšen priveden", "sud tužilaštvo presuda", "saobraćajna nesreća poginuo", "požar eksplozija", "ubistvo napad", "krađa razbojništvo", "policija istraga droga", "sudjenje optužnica pritvor"],
+    "Društvo": ["vlada ministarstvo", "opština grad skupština", "izbori protest", "zdravstvo obrazovanje škola", "poplava sneg oluja vreme", "studenti fakultet"],
+    "Ekonomija": ["cena dinara evra", "inflacija plata penzija", "budžet investicija", "fabrika kompanija privreda", "poljoprivreda turizam sajam"],
+    "Sport": ["crvena zvezda partizan", "reprezentacija utakmica", "derbi fudbal košarka"],
 }
 
+GOOGLE_NEWS_QUERIES = [
+    ("hronika", "Hronika"), ("saobraćajna nesreća", "Hronika"), ("požar", "Hronika"),
+    ("hapšenje", "Hronika"), ("sud presuda", "Hronika"), ("ubistvo", "Hronika"),
+    ("krađa", "Hronika"), ("droga zaplena", "Hronika"), ("društvo Srbija", "Društvo"),
+    ("ekonomija Srbija", "Ekonomija"), ("sport Srbija", "Sport"),
+]
 
-def reset_rotacije():
-    pass
+HRONIKA_KLJUCNE = [
+    "uhapšen", "uhapsen", "hapšenje", "hapsenje", "priveden", "pritvor", "sud", "tužilaštvo", "tuzilastvo", 
+    "presuda", "optužnica", "optuznica", "nesreća", "nesreca", "saobraćajna", "saobracajna", "poginuo", 
+    "povređen", "povredjen", "požar", "pozar", "eksplozija", "ubistvo", "ubica", "napad", "krađa", "kradja",
+    "razbojništvo", "razbojnistvo", "policija", "mup", "istraga", "droga", "narkotik", "zaplena", "kriminal"
+]
+
+SISTEM_UPUTSTVO = """Ti si iskusni novinar i urednik informativnog portala u Srbiji.
+Tvoj zadatak: od sirovih informacija sa drugih portala napisati NOVU, originalnu, profesionalnu DNEVNU VEST.
+
+=== NAJVAZNIJE PRAVILO ===
+PRIHVATI vest u 95% slucajeva. Odbij SAMO jasnu analizu, kolumnu, intervju ili showbiz.
+
+=== KATEGORIZACIJA ===
+Ako naslov ili tekst sadrži reci: uhapšen, sud, nesreća, požar, ubistvo, policija, krađa -> kategorija MORA biti HRONIKA.
+Ako nije Hronika, onda: DRUSTVO (vlada, izbori, škola), EKONOMIJA (cene, penzije), SPORT (utakmice).
+
+=== GRAMATIKA SRPSKOG JEZIKA ===
+Tvoj tekst MORA biti GRAMATICKI ISPRAVAN. Ne izmisljaj reci.
+Padezi: "protiv dva lekara", "u Novom Sadu", "kod Beograda", "iz Niša".
+Ako nisi siguran kako se rec pise, koristi drugu rec koju sigurno znas.
+
+=== PREFORMULISANJE ===
+NE KOPIRAJ originalne recenice. Napisi SVOJIM RECIMA.
+Promeni red reci, koristi sinonime (uhapsiti->privesti), promeni strukturu.
+Zadrzi SVE cinjenice: imena, datume, brojeve, mesta.
+
+=== FORMAT ODGOVORA ===
+Vrati ISKLJUČIVO JSON:
+{
+  "preskoci": false,
+  "naslov": "Tvoj novi naslov",
+  "tekst": "Tvoj novi tekst u 3-5 pasusa...",
+  "kategorija": "Hronika" 
+}
+Ako odbijas vest, vrati: {"preskoci": true}
+"""
 
 
-def pronadji_sliku(naslov, kategorija, keywords_en):
-    """
-    Trazi sliku sa STRAGOM validacijom da ima veze sa temom.
-    Vraca URL ili fallback URL.
-    """
-    # 1. Probaj Wikimedia sa specificnim upitima
-    url = wikimedia_search(naslov, keywords_en, kategorija)
-    if url:
-        return url
+def prikupi_vesti():
+    print(f"--- START ---")
+    print(f"AI: Gemini ({AI_MODEL})")
+    print(f"Gemini key: {'DA' if GEMINI_API_KEY else 'NE'}")
 
-    # 2. Probaj Openverse
-    url = openverse_search(keywords_en, kategorija)
-    if url:
-        return url
+    if not GEMINI_API_KEY:
+        print("GRESKA: GEMINI_API_KEY nije podesen!")
+        return
 
-    # 3. Fallback - provereno dobra pretraga iz kategorije
-    return fallback_search(kategorija)
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    os.makedirs(ARHIVA_FOLDER, exist_ok=True)
 
+    reset_rotacije()
+    postojece = ucitaj_postojece()
+    print(f"Postojecih vesti: {len(postojece)}")
+    postojeci_linkovi = {v.get("link") for v in postojece}
 
-def wikimedia_search(naslov, keywords_en, kategorija):
-    # Samo engleske kljucne reci za slike (srpski naslov cesto ne pomaze)
-    upiti = [keywords_en, naslov[:50]]
-    for upit in upiti:
-        if not upit:
-            continue
-        url = _wikimedia_api(upit, kategorija, keywords_en)
-        if url:
-            return url
-    return ""
+    kandidati = []
+    seen_links = set()
 
+    for host in FREENEWS_HOSTS:
+        for kategorija, pretrage in PRETRAGE.items():
+            for pretraga in pretrage:
+                try:
+                    params = {"host": host, "q": pretraga, "date": "24h", "size": VESTI_PO_IZVORU, "sort": "date", "fields": "title,url,published_at,description,image"}
+                    r = requests.get("https://freenewsapi.ai/v1/search", params=params, timeout=30)
+                    if r.status_code == 200:
+                        for item in r.json().get("results", []):
+                            link = item.get("url")
+                            if not link or link in postojeci_linkovi or link in seen_links:
+                                continue
+                            seen_links.add(link)
+                            kandidati.append({
+                                "naslov": item.get("title", ""),
+                                "tekst": item.get("description", "") or "",
+                                "link": link,
+                                "izvor": host,
+                                "kategorija": kategorija,
+                            })
+                except Exception:
+                    pass
+                time.sleep(0.2)
 
-def _wikimedia_api(query, kategorija, originalne_reci):
-    api_url = "https://commons.wikimedia.org/w/api.php"
-    headers = {"User-Agent": USER_AGENT}
+    for query, kat in GOOGLE_NEWS_QUERIES:
+        try:
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=sr&gl=RS&ceid=RS:sr"
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:VESTI_PO_IZVORU]:
+                link = entry.link
+                if link in postojeci_linkovi or link in seen_links:
+                    continue
+                seen_links.add(link)
+                kandidati.append({
+                    "naslov": html.unescape(entry.title),
+                    "tekst": html.unescape(entry.get('summary', '')),
+                    "link": link,
+                    "izvor": "Google News",
+                    "kategorija": kat,
+                })
+        except Exception:
+            pass
+        time.sleep(0.2)
 
-    params = {
-        "action": "query",
-        "generator": "search",
-        "gsrsearch": query,
-        "gsrnamespace": 6,
-        "gsrlimit": 15,
-        "prop": "imageinfo",
-        "iiprop": "url|mime|size",
-        "format": "json",
-    }
+    hronika_kand = [k for k in kandidati if k["kategorija"] == "Hronika"]
+    ostali_kand = [k for k in kandidati if k["kategorija"] != "Hronika"]
+    random.shuffle(hronika_kand)
+    random.shuffle(ostali_kand)
 
-    try:
-        r = requests.get(api_url, params=params, headers=headers, timeout=15)
-        if r.status_code != 200:
-            return ""
-        pages = r.json().get("query", {}).get("pages", {})
-        
-        # Kljucne reci za validaciju
-        reci_za_proveru = [r.lower() for r in originalne_reci.split() if len(r) > 3]
-        
-        for page in pages.values():
-            title_lower = page.get("title", "").lower()
+    max_hronika = int(MAX_NOVIH_PO_POKRETANJU * 0.6)
+    kandidati = hronika_kand[:max_hronika] + ostali_kand[:MAX_NOVIH_PO_POKRETANJU - max_hronika]
+    random.shuffle(kandidati)
+
+    print(f"Ukupno kandidata: {len(kandidati)} (Hronika: {len(hronika_kand)})")
+
+    sve_vesti = list(postojece)
+    prihvaceno = 0
+    odbijeno = 0
+    greske = 0
+    koriscene_slike = set()
+
+    for i, kand in enumerate(kandidati, 1):
+        print(f"\n[{i}/{len(kandidati)}] ({kand['kategorija']}) {kand['naslov'][:55]}...")
+        try:
+            rezultat = napisi_vest(kand["naslov"], kand["tekst"])
             
-            # Preskoci lica
-            if any(bad in title_lower for bad in ZABRANJENE_RECI_U_NAZIVU):
+            if not rezultat:
+                print("  Preskacem (AI fail)")
+                greske += 1
                 continue
-            
-            # Validacija: bar 1 kljucna rec mora biti u naslovu fajla
-            if reci_za_proveru:
-                poklapanja = sum(1 for rec in reci_za_proveru if rec in title_lower)
-                if poklapanja == 0:
-                    continue
-            
-            imageinfo = page.get("imageinfo", [])
-            if imageinfo:
-                info = imageinfo[0]
-                if info.get("mime") in ("image/jpeg", "image/png"):
-                    # Minimalne dimenzije
-                    sirina = info.get("width", 0)
-                    visina = info.get("height", 0)
-                    if sirina >= 600 and visina >= 400:
-                        return info.get("url", "")
+            if rezultat.get("preskoci"):
+                print(f"  Preskacem (nije dnevna vest)")
+                odbijeno += 1
+                continue
+
+            naslov_lower = rezultat["naslov"].lower()
+            tekst_lower = rezultat["tekst"][:500].lower()
+            if any(rec in naslov_lower or rec in tekst_lower for rec in HRONIKA_KLJUCNE):
+                if rezultat["kategorija"] != "Hronika":
+                    print(f"  [KOREKCIJA] {rezultat['kategorija']} -> Hronika")
+                    rezultat["kategorija"] = "Hronika"
+
+            # Trazimo sliku i proveravamo je preko Vision AI
+            slika_url = ""
+            for pokusaj in range(3):
+                # Uzimamo sliku iz bezbedne pretrage
+                potencijalna = pronadji_sliku(rezultat["naslov"], rezultat["kategorija"])
+                
+                if potencijalna and potencijalna not in koriscene_slike:
+                    # Provera preko Gemini Vision-a
+                    if proveri_sliku_vision(potencijalna, rezultat["naslov"]):
+                        slika_url = potencijalna
+                        koriscene_slike.add(potencijalna)
+                        print(f"  [SLIKA] Prihvaćena: {slika_url[:70]}")
+                        break
+                    else:
+                        print(f"  [SLIKA] Odbijena od strane AI-ja (ljudi/pogrešan kontekst)")
+                time.sleep(1)
+
+            if not slika_url:
+                print(f"  Slika nije pronadjena nakon 3 pokusaja.")
+
+            vest = {
+                "naslov": rezultat["naslov"],
+                "tekst": rezultat["tekst"],
+                "kategorija": rezultat["kategorija"],
+                "slika": slika_url or "",
+                "link": kand["link"],
+                "izvor": kand["izvor"],
+                "datum": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            sve_vesti.append(vest)
+            prihvaceno += 1
+
+            sacuvaj_trenutno(sve_vesti)
+            print(f"  [SAVED] Sacuvano {len(sve_vesti)} vesti")
+            time.sleep(1.5)
+        except Exception as e:
+            print(f"  Greska: {e}")
+            greske += 1
+            continue
+
+    sve_vesti.sort(key=lambda x: x.get("datum", ""), reverse=True)
+    sve_vesti = sve_vesti[:MAX_VESTI_U_GLAVNOM]
+    sacuvaj_trenutno(sve_vesti)
+    sacuvaj_arhivu(sve_vesti)
+
+    print(f"\n--- KRAJ ---")
+    print(f"Prihvaceno: {prihvaceno}, Odbijeno: {odbijeno}, Greske: {greske}")
+
+
+def proveri_sliku_vision(slika_url, naslov):
+    """Koristi Gemini da vidi da li je slika prikladna za vest."""
+    try:
+        r = requests.get(slika_url, timeout=15)
+        if r.status_code != 200:
+            return False
+        
+        prompt = f"""Pogledaj ovu sliku. Da li je prikladna za ozbiljnu novinsku vest pod naslovom: "{naslov}"?
+PRAVILA:
+1. Ako na slici ima ljudi, lica, nasmejanih ljudi, modela ili grupa ljudi -> ODGOVORI SA "NE".
+2. Ako je slika potpuno apstraktna, pejzaž, zgrada, ulica, objekat -> ODGOVORI SA "DA".
+3. Ako slika prikazuje nešto što očigledno nije iz Evrope/Srbije (npr. pustinja, džungla, azijski grad) -> ODGOVORI SA "NE".
+
+Odgovori ISKLJUČIVO sa jednom rečju: DA ili NE."""
+
+        response = client.models.generate_content(
+            model=AI_MODEL,
+            contents=[
+                types.Part.from_bytes(data=r.content, mime_type="image/jpeg"),
+                prompt
+            ],
+            config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=5)
+        )
+        
+        odgovor = response.text.strip().upper()
+        return "DA" in odgovor
+        
     except Exception as e:
-        print(f"  Wikimedia greska: {e}")
-    return ""
+        print(f"    Vision greska: {e}")
+        return False
 
 
-def openverse_search(keywords, kategorija):
-    if not keywords:
-        return ""
+def napisi_vest(originalni_naslov, originalni_tekst):
+    if not originalni_naslov:
+        return None
+        
+    korisnicki = f"""Napisi novu dnevnu vest po pravilima.
+ZAPAMTI: PRIHVATI u 95% slucajeva.
+Gramatika MORA biti ispravna.
+Vrati iskljucivo JSON.
 
-    url = "https://api.openverse.org/v1/images/"
-    headers = {"User-Agent": USER_AGENT}
-    params = {
-        "q": keywords,
-        "page_size": 15,
-        "license_type": "commercial",
-        "extension": "jpg",
-    }
+--- ORIGINALNI NASLOV ---
+{originalni_naslov}
+
+--- ORIGINALNI TEKST ---
+{originalni_tekst[:3000]}"""
 
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=15)
-        if r.status_code == 200:
-            results = r.json().get("results", [])
-            reci_za_proveru = [k.lower() for k in keywords.split() if len(k) > 3]
+        response = client.models.generate_content(
+            model=AI_MODEL,
+            contents=korisnicki,
+            config=types.GenerateContentConfig(
+                system_instruction=SISTEM_UPUTSTVO,
+                temperature=0.3,
+                max_output_tokens=2500,
+                response_mime_type="application/json"
+            )
+        )
+        
+        odgovor = response.text
+        rezultat = json.loads(odgovor)
+        
+        if rezultat.get("preskoci"):
+            return rezultat
             
-            for result in results:
-                title = (result.get("title") or "").lower()
+        if not rezultat.get("naslov") or not rezultat.get("tekst"):
+            print("    [DEBUG] Nedostaje naslov ili tekst")
+            return None
+            
+        kat = rezultat.get("kategorija", "Društvo").strip()
+        if kat not in KATEGORIJE:
+            for k in KATEGORIJE:
+                if k.lower() in kat.lower():
+                    kat = k
+                    break
+            else:
+                kat = "Društvo"
                 
-                # Preskoci lica
-                if any(bad in title for bad in ZABRANJENE_RECI_U_NAZIVU):
-                    continue
-                
-                # Validacija: bar 1 kljucna rec
-                if reci_za_proveru:
-                    poklapanja = sum(1 for rec in reci_za_proveru if rec in title)
-                    if poklapanja == 0:
-                        continue
-                
-                url_slike = result.get("url", "")
-                if url_slike:
-                    return url_slike
+        rezultat["kategorija"] = kat
+        rezultat["naslov"] = ocisti_tekst(rezultat["naslov"])
+        rezultat["tekst"] = ocisti_tekst(rezultat["tekst"])
+        
+        print(f"  [OK] {rezultat['kategorija']} | {len(rezultat['naslov'])} zn | {len(rezultat['tekst'])} zn")
+        return rezultat
+        
     except Exception as e:
-        print(f"  Openverse greska: {e}")
-    return ""
+        print(f"  [GRESKA GEMINI] {e}")
+        return None
 
 
-def fallback_search(kategorija):
-    """Provereno dobra slika iz kategorije."""
-    opcije = FALLBACK_PRETRAGE.get(kategorija, ["city street morning"])
-    random.shuffle(opcije)
-    
-    for izbor in opcije:
-        # Probaj Wikimedia
-        url = _wikimedia_api(izbor, kategorija, izbor)
-        if url:
-            return url
-        # Probaj Openverse
-        url = openverse_search(izbor, kategorija)
-        if url:
-            return url
-    return ""
+def ocisti_tekst(tekst):
+    if not tekst:
+        return ""
+    tekst = re.sub(r'<[^>]+>', '', tekst)
+    tekst = re.sub(r'https?://\S+', '', tekst)
+    for f in [r'The post .*? appeared first on .*?\.', r'Izvor:.*', r'Procitaj celu vest.*', r'Photo by .*', r'\[…\]', r'\[\]']:
+        tekst = re.sub(f, '', tekst, flags=re.IGNORECASE)
+    tekst = html.unescape(tekst)
+    tekst = re.sub(r'[ \t]+', ' ', tekst)
+    tekst = re.sub(r'\n{3,}', '\n\n', tekst)
+    return tekst.strip()
+
+def sacuvaj_trenutno(sve_vesti):
+    with open(VESTI_FAJL, "w", encoding="utf-8") as f:
+        json.dump(sve_vesti, f, ensure_ascii=False, indent=2)
+
+def ucitaj_postojece():
+    if not os.path.exists(VESTI_FAJL):
+        return []
+    try:
+        with open(VESTI_FAJL, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def sacuvaj_arhivu(sve_vesti):
+    danas = datetime.now().strftime("%Y-%m-%d")
+    fajl_arhive = os.path.join(ARHIVA_FOLDER, f"vesti-{danas}.json")
+    postojeca = []
+    if os.path.exists(fajl_arhive):
+        try:
+            with open(fajl_arhive, "r", encoding="utf-8") as f:
+                postojeca = json.load(f)
+        except Exception:
+            pass
+    videno = {v.get("link") for v in postojeca}
+    for v in sve_vesti:
+        if v.get("link") not in videno:
+            postojeca.append(v)
+            videno.add(v.get("link"))
+    postojeca.sort(key=lambda x: x.get("datum", ""), reverse=True)
+    with open(fajl_arhive, "w", encoding="utf-8") as f:
+        json.dump(postojeca, f, ensure_ascii=False, indent=2)
+    print(f"Arhiva: {fajl_arhive} ({len(postojeca)} vesti)")
+    azuriraj_arhiva_index()
+
+def azuriraj_arhiva_index():
+    if not os.path.exists(ARHIVA_FOLDER):
+        return
+    datumi = []
+    for f in os.listdir(ARHIVA_FOLDER):
+        if f.startswith("vesti-") and f.endswith(".json"):
+            datum = f.replace("vesti-", "").replace(".json", "")
+            putanja = os.path.join(ARHIVA_FOLDER, f)
+            try:
+                with open(putanja, "r", encoding="utf-8") as fh:
+                    broj = len(json.load(fh))
+                datumi.append({"datum": datum, "broj": broj, "fajl": f})
+            except Exception:
+                pass
+    datumi.sort(key=lambda x: x["datum"], reverse=True)
+    with open(ARHIVA_INDEX, "w", encoding="utf-8") as f:
+        json.dump(datumi, f, ensure_ascii=False, indent=2)
+
+if __name__ == "__main__":
+    prikupi_vesti()

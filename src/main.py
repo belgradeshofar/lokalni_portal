@@ -19,8 +19,8 @@ from image_finder import pronadji_sliku, reset_rotacije
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Koristimo Gemini 2.5 Flash (odličan za srpski, besplatan)
-AI_MODEL = "gemini-2.5-flash"
+# NOVI MODEL
+AI_MODEL = "gemini-3.8-flash"
 
 FREENEWS_HOSTS = ["www.kurir.rs", "www.novosti.rs", "www.alo.rs", "n1info.rs"]
 
@@ -50,13 +50,6 @@ GOOGLE_NEWS_QUERIES = [
     ("krađa", "Hronika"), ("droga zaplena", "Hronika"), ("društvo Srbija", "Društvo"),
     ("ekonomija Srbija", "Ekonomija"), ("sport Srbija", "Sport"),
 ]
-
-ATMOSFERA = {
-    "Hronika": ["night", "dusk", "foggy", "dark"],
-    "Društvo": ["morning", "dawn", "afternoon", "autumn"],
-    "Ekonomija": ["dusk", "industrial", "morning", "sunset"],
-    "Sport": ["floodlights", "night", "dramatic", "stadium"],
-}
 
 HRONIKA_KLJUCNE = [
     "uhapšen", "uhapsen", "hapšenje", "hapsenje", "priveden", "pritvor", "sud", "tužilaštvo", "tuzilastvo", 
@@ -136,7 +129,7 @@ def prikupi_vesti():
                                 "izvor": host,
                                 "kategorija": kategorija,
                             })
-                except Exception as e:
+                except Exception:
                     pass
                 time.sleep(0.2)
 
@@ -156,7 +149,7 @@ def prikupi_vesti():
                     "izvor": "Google News",
                     "kategorija": kat,
                 })
-        except Exception as e:
+        except Exception:
             pass
         time.sleep(0.2)
 
@@ -198,21 +191,23 @@ def prikupi_vesti():
                     print(f"  [KOREKCIJA] {rezultat['kategorija']} -> Hronika")
                     rezultat["kategorija"] = "Hronika"
 
-            keywords_en = napravi_kljucne_reci(rezultat["naslov"], rezultat["kategorija"])
-            print(f"  Keywords: {keywords_en}")
-
+            # Trazimo sliku i proveravamo je preko Vision AI
             slika_url = ""
             for pokusaj in range(3):
-                potencijalna = pronadji_sliku(rezultat["naslov"], rezultat["kategorija"], keywords_en)
+                potencijalna = pronadji_sliku(rezultat["naslov"], rezultat["kategorija"])
+                
                 if potencijalna and potencijalna not in koriscene_slike:
-                    slika_url = potencijalna
-                    koriscene_slike.add(potencijalna)
-                    break
+                    if proveri_sliku_vision(potencijalna, rezultat["naslov"]):
+                        slika_url = potencijalna
+                        koriscene_slike.add(potencijalna)
+                        print(f"  [SLIKA] Prihvaćena: {slika_url[:70]}")
+                        break
+                    else:
+                        print(f"  [SLIKA] Odbijena od strane AI-ja (ljudi/pogrešan kontekst)")
+                time.sleep(1)
 
-            if slika_url:
-                print(f"  [SLIKA] {slika_url[:70]}")
-            else:
-                print(f"  Slika nije pronadjena")
+            if not slika_url:
+                print(f"  Slika nije pronadjena nakon 3 pokusaja.")
 
             vest = {
                 "naslov": rezultat["naslov"],
@@ -228,7 +223,7 @@ def prikupi_vesti():
 
             sacuvaj_trenutno(sve_vesti)
             print(f"  [SAVED] Sacuvano {len(sve_vesti)} vesti")
-            time.sleep(1.5) # Gemini je brz, ali ne želimo da prekoračimo limit
+            time.sleep(1.5)
         except Exception as e:
             print(f"  Greska: {e}")
             greske += 1
@@ -241,6 +236,38 @@ def prikupi_vesti():
 
     print(f"\n--- KRAJ ---")
     print(f"Prihvaceno: {prihvaceno}, Odbijeno: {odbijeno}, Greske: {greske}")
+
+
+def proveri_sliku_vision(slika_url, naslov):
+    """Koristi Gemini 3.8 Flash da vidi da li je slika prikladna za vest."""
+    try:
+        r = requests.get(slika_url, timeout=15)
+        if r.status_code != 200:
+            return False
+        
+        prompt = f"""Pogledaj ovu sliku. Da li je prikladna za ozbiljnu novinsku vest pod naslovom: "{naslov}"?
+PRAVILA:
+1. Ako na slici ima ljudi, lica, nasmejanih ljudi, modela ili grupa ljudi -> ODGOVORI SA "NE".
+2. Ako je slika potpuno apstraktna, pejzaž, zgrada, ulica, objekat -> ODGOVORI SA "DA".
+3. Ako slika prikazuje nešto što očigledno nije iz Evrope/Srbije (npr. pustinja, džungla, azijski grad) -> ODGOVORI SA "NE".
+
+Odgovori ISKLJUČIVO sa jednom rečju: DA ili NE."""
+
+        response = client.models.generate_content(
+            model=AI_MODEL,
+            contents=[
+                types.Part.from_bytes(data=r.content, mime_type="image/jpeg"),
+                prompt
+            ],
+            config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=5)
+        )
+        
+        odgovor = response.text.strip().upper()
+        return "DA" in odgovor
+        
+    except Exception as e:
+        print(f"    Vision greska: {e}")
+        return False
 
 
 def napisi_vest(originalni_naslov, originalni_tekst):
@@ -299,38 +326,6 @@ Vrati iskljucivo JSON.
     except Exception as e:
         print(f"  [GRESKA GEMINI] {e}")
         return None
-
-
-def napravi_kljucne_reci(naslov, kategorija):
-    seed_val = sum(ord(c) for c in naslov)
-    rng = random.Random(seed_val)
-    atmosfera = rng.choice(ATMOSFERA.get(kategorija, ["atmospheric"]))
-
-    prompt = f"""Convert this Serbian news headline into ENGLISH keywords for stock photo search.
-Rules:
-- NEVER use: man, woman, person, people, face, portrait, president, minister, politician.
-- Use compound words: "basketball arena" (not "basket"), "courthouse" (not "court").
-- End with: {atmosfera}
-Category: {kategorija}
-Headline: {naslov}
-
-Return ONLY 3-4 keywords. Nothing else.
-Examples: "police car night lights", "basketball arena floodlights"
-"""
-    try:
-        response = client.models.generate_content(
-            model=AI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=20
-            )
-        )
-        res = response.text.strip()
-        return res.replace('"', '').replace("\n", " ")[:80]
-    except Exception as e:
-        print(f"    Keywords greska: {e}")
-        return f"{kategorija.lower()} building {atmosfera}"
 
 
 def ocisti_tekst(tekst):
